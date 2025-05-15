@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Graf relacji</title>
+    <script type="text/javascript" src="https://unpkg.com/vis-network@9.1.2/dist/vis-network.min.js"></script>
+    <style>
+        #network {
+            width: 100%;
+            height: 600px;
+            border: 1px solid lightgray;
+        }
+        #details {
+            margin-top: 20px;
+            border: 1px solid #ccc;
+            padding: 15px;
+            max-width: 400px;
+            font-family: Arial, sans-serif;
+            background: #f9f9f9;
+        }
+        #details img {
+            max-width: 100px;
+            border-radius: 50%;
+            margin-right: 15px;
+            vertical-align: middle;
+        }
+        #details a {
+            color: #1da1f2;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        #details a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+<h2>Graf relacji między osobami</h2>
+<div id="network"></div>
+
+<div id="details" style="display:none;"></div>
+
+<script>
+    fetch("http://localhost:8080/graph")
+        .then(response => response.json())
+        .then(data => {
+            const nodes = data.nodes.map(node => ({
+                id: node.id,
+                label: `
+                    <img src="${node.avatarURL || 'https://via.placeholder.com/40'}" style="width:40px; height:40px; border-radius:50%; vertical-align:middle; margin-right:5px;">
+                    <b>${node.name}</b><br>
+                    <small>${node.occupation}</small>
+                `,
+                shape: 'box',
+                margin: 10,
+                font: { multi: 'html' },
+                color: node.occupation === "Polityk" ? "#ff6666" : "#66b3ff"
+            }));
+
+            const edges = data.edges.map(edge => ({
+                from: edge.source,
+                to: edge.target,
+                label: `${edge.type}: ${edge.details}`,
+                arrows: 'to',
+                font: { align: "top" }
+            }));
+
+            const container = document.getElementById("network");
+            const networkData = {
+                nodes: new vis.DataSet(nodes),
+                edges: new vis.DataSet(edges)
+            };
+
+            const options = {
+                nodes: {
+                    shape: 'box',
+                    font: { size: 14, color: '#343434' },
+                    margin: 10
+                },
+                edges: {
+                    smooth: true,
+                    color: '#ccc'
+                },
+                layout: {
+                    improvedLayout: true
+                },
+                physics: {
+                    enabled: true,
+                    stabilization: { iterations: 1000 }
+                }
+            };
+
+            const network = new vis.Network(container, networkData, options);
+
+            network.on("click", function (params) {
+                if (params.nodes.length > 0) {
+                    const nodeId = params.nodes[0];
+                    const node = data.nodes.find(n => n.id === nodeId);
+                    if (node) {
+                        const detailsDiv = document.getElementById("details");
+                        detailsDiv.style.display = "block";
+                        detailsDiv.innerHTML = `
+                            <img src="${node.avatarURL || 'https://via.placeholder.com/100'}" alt="Avatar">
+                            <div style="display:inline-block; vertical-align:middle; max-width: 270px;">
+                                <h3>${node.name}</h3>
+                                <p><b>Zawód:</b> ${node.occupation}</p>
+                                <p>${node.description || "Brak opisu"}</p>
+                                ${node.xURL ? `<p><a href="${node.xURL}" target="_blank">Profil na X 🐦</a></p>` : ""}
+                            </div>
+                        `;
+                    }
+                }
+            });
+        })
+        .catch(err => {
+            console.error("Błąd podczas pobierania danych z API:", err);
+        });
+</script>
+</body>
+</html>
