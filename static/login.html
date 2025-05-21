@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - Political Connections</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Arial', sans-serif;
+    }
+  </style>
+</head>
+<body class="bg-gray-100">
+<div id="app" class="container mx-auto p-4">
+  <h1 class="text-2xl font-bold mb-4">Login</h1>
+
+  <!-- Login Form -->
+  <div class="mb-6 bg-white p-4 rounded shadow">
+    <h2 class="text-xl mb-2">Login</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <input v-model="loginForm.login" placeholder="Login" class="border p-2 rounded">
+      <input v-model="loginForm.password" type="password" placeholder="Password" class="border p-2 rounded">
+    </div>
+    <button @click="login" class="mt-2 bg-blue-500 text-white p-2 rounded hover:bg-blue-600">Login</button>
+    <p v-if="authError" class="text-red-500 mt-2">{{ authError }}</p>
+  </div>
+
+  <!-- Register Form -->
+  <div class="mb-6 bg-white p-4 rounded shadow">
+    <h2 class="text-xl mb-2">Register</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <input v-model="registerForm.login" placeholder="Login" class="border p-2 rounded">
+      <input v-model="registerForm.email" placeholder="Email" class="border p-2 rounded">
+      <input v-model="registerForm.password" type="password" placeholder="Password" class="border p-2 rounded">
+    </div>
+    <button @click="register" class="mt-2 bg-blue-500 text-white p-2 rounded hover:bg-blue-600">Register</button>
+    <p v-if="registerError" class="text-red-500 mt-2">{{ registerError }}</p>
+  </div>
+
+  <a href="/static/backend.html" class="text-blue-500 hover:underline">Back to Backend</a>
+</div>
+
+<script>
+  const { createApp, ref } = Vue;
+
+  createApp({
+    setup() {
+      const loginForm = ref({
+        login: '',
+        password: ''
+      });
+      const registerForm = ref({
+        login: '',
+        email: '',
+        password: ''
+      });
+      const authError = ref('');
+      const registerError = ref('');
+
+      const login = async () => {
+        try {
+          authError.value = '';
+          const response = await fetch('http://localhost:8080/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(loginForm.value),
+            credentials: 'include'
+          });
+          if (response.ok) {
+            window.location.href = '/static/backend.html';
+          } else {
+            authError.value = await response.text() || 'Login failed';
+          }
+        } catch (error) {
+          authError.value = 'Error logging in: ' + error.message;
+        }
+      };
+
+      const register = async () => {
+        try {
+          registerError.value = '';
+          const response = await fetch('http://localhost:8080/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(registerForm.value)
+          });
+          if (response.ok) {
+            registerForm.value = { login: '', email: '', password: '' };
+            alert('Registration successful! Please log in.');
+          } else {
+            registerError.value = await response.text() || 'Registration failed';
+          }
+        } catch (error) {
+          registerError.value = 'Error registering: ' + error.message;
+        }
+      };
+
+      return {
+        loginForm,
+        registerForm,
+        authError,
+        registerError,
+        login,
+        register
+      };
+    }
+  }).mount('#app');
+</script>
+</body>
+</html>

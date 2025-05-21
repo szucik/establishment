@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Political Connections</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+        }
+        .node circle {
+            stroke: #fff;
+            stroke-width: 1.5px;
+        }
+        .node text {
+            font-size: 12px;
+            pointer-events: none;
+        }
+        .link {
+            stroke: #999;
+            stroke-opacity: 0.6;
+        }
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 8px;
+            border-radius: 4px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+<div id="app" class="container mx-auto p-4">
+    <h1 class="text-2xl font-bold mb-4">Political Connections</h1>
+
+    <div v-if="error" class="mb-6 bg-red-100 p-4 rounded shadow text-red-700">
+        {{ error }}
+    </div>
+
+    <div v-if="!isLoggedIn" class="mb-6 bg-yellow-100 p-4 rounded shadow text-yellow-700">
+        You must be logged in to access this page. <a href="/static/login.html" class="text-blue-500 hover:underline">Go to login</a>
+    </div>
+
+    <div v-if="isLoggedIn">
+        <!-- Logged in user info -->
+        <div class="mb-6 bg-white p-4 rounded shadow">
+            <h2 class="text-xl mb-2">Logged in as {{ userLogin }}</h2>
+            <button @click="logout" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Logout</button>
+        </div>
+
+        <!-- Form to add person -->
+        <div class="mb-6 bg-white p-4 rounded shadow">
+            <h2 class="text-xl mb-2">Add Person</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <input v-model="newPerson.name" placeholder="Name" class="border p-2 rounded">
+                <select v-model="newPerson.occupation" class="border p-2 rounded">
+                    <option value="Polityk">Polityk</option>
+                    <option value="Dziennikarz">Dziennikarz</option>
+                </select>
+                <input v-model="newPerson.image_url" placeholder="Image URL" class="border p-2 rounded">
+                <input v-model="newPerson.twitter" placeholder="Twitter Handle" class="border p-2 rounded">
+                <textarea v-model="newPerson.description" placeholder="Description" class="border p-2 rounded col-span-2"></textarea>
+            </div>
+            <button @click="addPerson" class="mt-2 bg-blue-500 text-white p-2 rounded hover:bg-blue-600">Add Person</button>
+        </div>
+
+        <!-- Form to add relationship -->
+        <div class="mb-6 bg-white p-4 rounded shadow">
+            <h2 class="text-xl mb-2">Add Relationship</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <select v-model="newRelationship.source_id" class="border p-2 rounded">
+                    <option v-for="person in persons" :value="person.id" :key="person.id">{{ person.name }}</option>
+                </select>
+                <select v-model="newRelationship.target_id" class="border p-2 rounded">
+                    <option v-for="person in persons" :value="person.id" :key="person.id">{{ person.name }}</option>
+                </select>
+                <select v-model="newRelationship.type" class="border p-2 rounded">
+                    <option value="FAMILY">Family</option>
+                    <option value="COLLEAGUE">Colleague</option>
+                </select>
+                <input v-model="newRelationship.details" placeholder="Details" class="border p-2 rounded">
+            </div>
+            <button @click="addRelationship" class="mt-2 bg-blue-500 text-white p-2 rounded hover:bg-blue-600">Add Relationship</button>
+        </div>
+
+        <!-- Persons list -->
+        <div class="mb-6 bg-white p-4 rounded shadow">
+            <h2 class="text-xl mb-2">Persons</h2>
+            <ul class="list-disc pl-5">
+                <li v-for="person in persons" :key="person.id" class="mb-2">
+                    {{ person.name }} ({{ person.occupation }})
+                </li>
+            </ul>
+        </div>
+
+        <!-- Graph visualization -->
+        <div class="bg-white p-4 rounded shadow">
+            <h2 class="text-xl mb-2">Relationship Graph</h2>
+            <div id="graph"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const { createApp, ref, onMounted } = Vue;
+
+    createApp({
+        setup() {
+            const isLoggedIn = ref(false);
+            const userLogin = ref('');
+            const error = ref('');
+            const persons = ref([]);
+            const graph = ref({ nodes: [], edges: [] });
+            const newPerson = ref({
+                id: crypto.randomUUID(),
+                name: '',
+                occupation: 'Polityk',
+                image_url: '',
+                twitter: '',
+                description: ''
+            });
+            const newRelationship = ref({
+                source_id: '',
+                target_id: '',
+                type: 'FAMILY',
+                details: ''
+            });
+
+            const checkSession = async () => {
+                try {
+                    console.log('Checking session...');
+                    const response = await fetch('http://localhost:8080/check-session', {
+                        method: 'GET',
+                        credentials: 'include'
+                    });
+                    console.log('Check-session response:', response.status, response.statusText);
+                    if (response.ok) {
+                        const data = await response.json();
+                        console.log('Session data:', data);
+                        isLoggedIn.value = true;
+                        userLogin.value = data.login;
+                    } else {
+                        console.log('Session check failed:', response.status, response.statusText);
+                        isLoggedIn.value = false;
+                        userLogin.value = '';
+                        error.value = `Session check failed: ${response.status} ${response.statusText}`;
+                    }
+                } catch (err) {
+                    console.error('Error checking session:', err);
+                    isLoggedIn.value = false;
+                    userLogin.value = '';
+                    error.value = 'Error checking session: ' + err.message;
+                }
+            };
+
+            const fetchPersons = async () => {
+                try {
+                    const response = await fetch('http://localhost:8080/persons');
+                    if (response.ok) {
+                        persons.value = await response.json();
+                    } else {
+                        error.value = `Error fetching persons: ${response.status} ${response.statusText}`;
+                    }
+                } catch (error) {
+                    console.error('Error fetching persons:', error);
+                    error.value = 'Error fetching persons: ' + error.message;
+                }
+            };
+
+            const fetchGraph = async () => {
+                try {
+                    const response = await fetch('http://localhost:8080/graph');
+                    if (response.ok) {
+                        graph.value = await response.json();
+                        renderGraph();
+                    } else {
+                        error.value = `Error fetching graph: ${response.status} ${response.statusText}`;
+                    }
+                } catch (error) {
+                    console.error('Error fetching graph:', error);
+                    error.value = 'Error fetching graph: ' + error.message;
+                }
+            };
+
+            const addPerson = async () => {
+                try {
+                    const response = await fetch('http://localhost:8080/person', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(newPerson.value),
+                        credentials: 'include'
+                    });
+                    if (response.ok) {
+                        await fetchPersons();
+                        await fetchGraph();
+                        newPerson.value = {
+                            id: crypto.randomUUID(),
+                            name: '',
+                            occupation: 'Polityk',
+                            image_url: '',
+                            twitter: '',
+                            description: ''
+                        };
+                    } else {
+                        error.value = `Error adding person: ${response.status} ${response.statusText}`;
+                    }
+                } catch (error) {
+                    console.error('Error adding person:', error);
+                    error.value = 'Error adding person: ' + error.message;
+                }
+            };
+
+            const addRelationship = async () => {
+                try {
+                    const response = await fetch('http://localhost:8080/relationship', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(newRelationship.value),
+                        credentials: 'include'
+                    });
+                    if (response.ok) {
+                        await fetchGraph();
+                        newRelationship.value = {
+                            source_id: '',
+                            target_id: '',
+                            type: 'FAMILY',
+                            details: ''
+                        };
+                    } else {
+                        error.value = `Error adding relationship: ${response.status} ${response.statusText}`;
+                    }
+                } catch (error) {
+                    console.error('Error adding relationship:', error);
+                    error.value = 'Error adding relationship: ' + error.message;
+                }
+            };
+
+            const logout = async () => {
+                try {
+                    const response = await fetch('http://localhost:8080/logout', {
+                        method: 'POST',
+                        credentials: 'include'
+                    });
+                    if (response.ok) {
+                        isLoggedIn.value = false;
+                        userLogin.value = '';
+                        window.location.href = '/static/login.html';
+                    } else {
+                        error.value = `Error logging out: ${response.status} ${response.statusText}`;
+                    }
+                } catch (error) {
+                    console.error('Error logging out:', error);
+                    error.value = 'Error logging out: ' + error.message;
+                }
+            };
+
+            const renderGraph = () => {
+                const width = 800;
+                const height = 600;
+
+                d3.select('#graph').selectAll('*').remove();
+                const svg = d3.select('#graph')
+                    .append('svg')
+                    .attr('width', width)
+                    .attr('height', height);
+
+                const simulation = d3.forceSimulation(graph.value.nodes)
+                    .force('link', d3.forceLink(graph.value.edges).id(d => d.id).distance(100))
+                    .force('charge', d3.forceManyBody().strength(-300))
+                    .force('center', d3.forceCenter(width / 2, height / 2));
+
+                const link = svg.append('g')
+                    .attr('class', 'link')
+                    .selectAll('line')
+                    .data(graph.value.edges)
+                    .enter()
+                    .append('line')
+                    .attr('stroke-width', 2)
+                    .attr('stroke', d => d.type === 'FAMILY' ? '#ff9999' : '#99ccff');
+
+                const node = svg.append('g')
+                    .attr('class', 'node')
+                    .selectAll('g')
+                    .data(graph.value.nodes)
+                    .enter()
+                    .append('g');
+
+                node.append('circle')
+                    .attr('r', 10)
+                    .attr('fill', d => d.occupation === 'Polityk' ? '#ff4444' : '#44cc44');
+
+                node.append('text')
+                    .attr('dx', 12)
+                    .attr('dy', '.35em')
+                    .text(d => d.name);
+
+                const tooltip = d3.select('body')
+                    .append('div')
+                    .attr('class', 'tooltip')
+                    .style('opacity', 0);
+
+                node.on('mouseover', function(event, d) {
+                    tooltip.transition()
+                        .duration(200)
+                        .style('opacity', .9);
+                    tooltip.html(`
+                            <strong>${d.name}</strong><br>
+                            Occupation: ${d.occupation}<br>
+                            ${d.description ? 'Description: ' + d.description + '<br>' : ''}
+                            ${d.twitter ? 'Twitter: ' + d.twitter : ''}
+                        `)
+                        .style('left', (event.pageX + 10) + 'px')
+                        .style('top', (event.pageY - 28) + 'px');
+                })
+                    .on('mouseout', function() {
+                        tooltip.transition()
+                            .duration(500)
+                            .style('opacity', 0);
+                    });
+
+                simulation.on('tick', () => {
+                    link
+                        .attr('x1', d => d.source.x)
+                        .attr('y1', d => d.source.y)
+                        .attr('x2', d => d.target.x)
+                        .attr('y2', d => d.target.y);
+
+                    node
+                        .attr('transform', d => `translate(${d.x},${d.y})`);
+                });
+            };
+
+            onMounted(async () => {
+                await checkSession();
+                if (isLoggedIn.value) {
+                    await fetchPersons();
+                    await fetchGraph();
+                }
+            });
+
+            return {
+                isLoggedIn,
+                userLogin,
+                error,
+                persons,
+                newPerson,
+                newRelationship,
+                addPerson,
+                addRelationship,
+                logout
+            };
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>

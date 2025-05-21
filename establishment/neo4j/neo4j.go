@@ -3,13 +3,17 @@ package database
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"establishment/v1/establishment/models"
-
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-var ErrNoSuchPerson = errors.New("no such person")
+var (
+	ErrNoSuchPerson  = errors.New("no such person")
+	ErrUserExists    = errors.New("user already exists")
+	ErrNoSuchSession = errors.New("no such session")
+)
 
 func ConnectToNeo4j(ctx context.Context) (neo4j.DriverWithContext, error) {
 	uri := "neo4j://localhost:7687"
@@ -17,292 +21,332 @@ func ConnectToNeo4j(ctx context.Context) (neo4j.DriverWithContext, error) {
 	password := "secretgraph"
 	driver, err := neo4j.NewDriverWithContext(uri, neo4j.BasicAuth(username, password, ""))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to connect to Neo4j: %w", err)
 	}
 	if err := driver.VerifyConnectivity(ctx); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to verify Neo4j connectivity: %w", err)
 	}
 	return driver, nil
 }
 
 func AddPerson(ctx context.Context, driver neo4j.DriverWithContext, person models.Person) error {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{})
-	defer func() {
-		if err := session.Close(ctx); err != nil {
-			// Log session close error
-		}
-	}()
+	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
 
-	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `
-			CREATE (p:Person {
-				id: $id,
-				name: $name,
-				occupation: $occupation,
-				party: $party,
-				sb_status: $sb_status,
-				image_url: $image_url,
-				twitter: $twitter,
-				description: $description
-			})
-			RETURN p
-		`
-
-		params := map[string]interface{}{
+	_, err := session.Run(ctx,
+		`CREATE (p:Person {
+            id: $id, 
+            name: $name, 
+            occupation: $occupation,
+            image_url: $image_url,
+            twitter: $twitter,
+            description: $description
+        })`,
+		map[string]interface{}{
 			"id":          person.ID,
 			"name":        person.Name,
 			"occupation":  person.Occupation,
-			"party":       person.Party,
-			"sb_status":   person.SBStatus,
 			"image_url":   person.ImageURL,
 			"twitter":     person.Twitter,
 			"description": person.Description,
-		}
-		result, err := tx.Run(ctx, query, params)
-		if err != nil {
-			return nil, err
-		}
-		_, err = result.Consume(ctx)
-		return nil, err
-	})
-
-	return err
-}
-
-func AddRelationship(ctx context.Context, driver neo4j.DriverWithContext, rel models.Relationship) error {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{})
-	defer func() {
-		if err := session.Close(ctx); err != nil {
-			// Log session close error
-		}
-	}()
-
-	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `
-			MATCH (source:Person {id: $source_id}), (target:Person {id: $target_id})
-			MERGE (source)-[r:RELATION {type: $type, details: $details}]->(target)
-			RETURN source, target
-		`
-		params := map[string]interface{}{
-			"source_id": rel.SourceID,
-			"target_id": rel.TargetID,
-			"type":      rel.Type,
-			"details":   rel.Details,
-		}
-		result, err := tx.Run(ctx, query, params)
-		if err != nil {
-			return nil, err
-		}
-		_, err = result.Consume(ctx)
-		return nil, err
-	})
-
-	return err
-}
-
-func GetPersons(ctx context.Context, driver neo4j.DriverWithContext) ([]models.Person, error) {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{})
-	defer func() {
-		if err := session.Close(ctx); err != nil {
-			// Log session close error
-		}
-	}()
-
-	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `MATCH (p:Person) RETURN p.id, p.name, p.occupation, p.party, p.sb_status`
-		records, err := tx.Run(ctx, query, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		var persons []models.Person
-		for records.Next(ctx) {
-			record := records.Record()
-			person := models.Person{
-				ID:         record.Values[0].(string),
-				Name:       record.Values[1].(string),
-				Occupation: record.Values[2].(string),
-			}
-			if record.Values[3] != nil {
-				person.Party = record.Values[3].(string)
-			}
-			if record.Values[4] != nil {
-				person.SBStatus = record.Values[4].(string)
-			}
-			persons = append(persons, person)
-		}
-		return persons, nil
-	})
+		})
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("failed to add person: %w", err)
 	}
-	return result.([]models.Person), nil
+	return nil
 }
 
 func GetPerson(ctx context.Context, driver neo4j.DriverWithContext, id string) (models.Person, error) {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{})
-	defer func() {
-		if err := session.Close(ctx); err != nil {
-			// Log session close error
-		}
-	}()
+	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(ctx)
 
-	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `
-			MATCH (p:Person {id: $id})
-			RETURN p.id, p.name, p.occupation, p.party, p.sb_status, p.image_url, p.twitter, p.description
-		`
-		params := map[string]interface{}{
-			"id": id,
-		}
-		records, err := tx.Run(ctx, query, params)
-		if err != nil {
-			return nil, err
-		}
-
-		if records.Next(ctx) {
-			record := records.Record()
-			person := models.Person{
-				ID:         record.Values[0].(string),
-				Name:       record.Values[1].(string),
-				Occupation: record.Values[2].(string),
-			}
-			if record.Values[3] != nil {
-				person.Party = record.Values[3].(string)
-			}
-			if record.Values[4] != nil {
-				person.SBStatus = record.Values[4].(string)
-			}
-			if record.Values[5] != nil {
-				person.ImageURL = record.Values[5].(string)
-			}
-			if record.Values[6] != nil {
-				person.Twitter = record.Values[6].(string)
-			}
-			if record.Values[7] != nil {
-				person.Description = record.Values[7].(string)
-			}
-			return person, nil
-		}
-		return nil, ErrNoSuchPerson
-	})
+	result, err := session.Run(ctx,
+		`MATCH (p:Person {id: $id}) 
+         RETURN p.id, p.name, p.occupation, p.image_url, p.twitter, p.description`,
+		map[string]interface{}{"id": id})
 	if err != nil {
-		return models.Person{}, err
+		return models.Person{}, fmt.Errorf("failed to query person: %w", err)
 	}
-	if result == nil {
-		return models.Person{}, ErrNoSuchPerson
+
+	if result.Next(ctx) {
+		record := result.Record()
+		id, _ := record.Get("p.id")
+		name, _ := record.Get("p.name")
+		occupation, _ := record.Get("p.occupation")
+		imageURL, _ := record.Get("p.image_url")
+		twitter, _ := record.Get("p.twitter")
+		description, _ := record.Get("p.description")
+
+		return models.Person{
+			ID:          id.(string),
+			Name:        name.(string),
+			Occupation:  occupation.(string),
+			ImageURL:    imageURL.(string),
+			Twitter:     twitter.(string),
+			Description: description.(string),
+		}, nil
 	}
-	return result.(models.Person), nil
+
+	return models.Person{}, ErrNoSuchPerson
+}
+
+func AddRelationship(ctx context.Context, driver neo4j.DriverWithContext, rel models.Relationship) error {
+	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+
+	_, err := session.Run(ctx,
+		`MATCH (a:Person {id: $from}), (b:Person {id: $to})
+         CREATE (a)-[r:RELATIONSHIP {type: $type, details: $details}]->(b)`,
+		map[string]interface{}{
+			"from":    rel.From,
+			"to":      rel.To,
+			"type":    rel.Type,
+			"details": rel.Details,
+		})
+	if err != nil {
+		return fmt.Errorf("failed to add relationship: %w", err)
+	}
+	return nil
 }
 
 func GetGraph(ctx context.Context, driver neo4j.DriverWithContext) (models.Graph, error) {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{})
-	defer func() {
-		if err := session.Close(ctx); err != nil {
-			// Log session close error
+	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx,
+		`MATCH (p:Person)
+         OPTIONAL MATCH (p)-[r:RELATIONSHIP]->(q:Person)
+         RETURN p.id, p.name, p.occupation, p.image_url, p.twitter, p.description,
+                r.type, r.details, q.id as target_id`,
+		nil)
+	if err != nil {
+		return models.Graph{}, fmt.Errorf("failed to query graph: %w", err)
+	}
+
+	nodes := make(map[string]models.Person)
+	edges := []models.Relationship{}
+
+	for result.Next(ctx) {
+		record := result.Record()
+		id, _ := record.Get("p.id")
+		name, _ := record.Get("p.name")
+		occupation, _ := record.Get("p.occupation")
+		imageURL, _ := record.Get("p.image_url")
+		twitter, _ := record.Get("p.twitter")
+		description, _ := record.Get("p.description")
+
+		node := models.Person{
+			ID:          id.(string),
+			Name:        name.(string),
+			Occupation:  occupation.(string),
+			ImageURL:    imageURL.(string),
+			Twitter:     twitter.(string),
+			Description: description.(string),
 		}
-	}()
+		nodes[id.(string)] = node
 
-	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `
-            MATCH (p:Person)-[r:RELATION]->(p2:Person)
-            RETURN 
-                p.id, p.name, p.occupation, p.party, p.sb_status, p.image_url, p.twitter, p.description,
-                r.type, r.details,
-                p2.id, p2.name, p2.occupation, p2.party, p2.sb_status, p2.image_url, p2.twitter, p2.description
-        `
-		records, err := tx.Run(ctx, query, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		nodes := make(map[string]models.Node)
-		var edges []models.Edge
-
-		for records.Next(ctx) {
-			record := records.Record()
-
-			sourceID := record.Values[0].(string)
-			sourceName := record.Values[1].(string)
-			sourceOccupation := record.Values[2].(string)
-			var sourceParty, sourceSBStatus, sourceImageURL, sourceTwitter, sourceDescription string
-			if record.Values[3] != nil {
-				sourceParty = record.Values[3].(string)
-			}
-			if record.Values[4] != nil {
-				sourceSBStatus = record.Values[4].(string)
-			}
-			if record.Values[5] != nil {
-				sourceImageURL = record.Values[5].(string)
-			}
-			if record.Values[6] != nil {
-				sourceTwitter = record.Values[6].(string)
-			}
-			if record.Values[7] != nil {
-				sourceDescription = record.Values[7].(string)
-			}
-
-			relType := record.Values[8].(string)
-			relDetails := record.Values[9].(string)
-
-			targetID := record.Values[10].(string)
-			targetName := record.Values[11].(string)
-			targetOccupation := record.Values[12].(string)
-			var targetParty, targetSBStatus, targetImageURL, targetTwitter, targetDescription string
-			if record.Values[13] != nil {
-				targetParty = record.Values[13].(string)
-			}
-			if record.Values[14] != nil {
-				targetSBStatus = record.Values[14].(string)
-			}
-			if record.Values[15] != nil {
-				targetImageURL = record.Values[15].(string)
-			}
-			if record.Values[16] != nil {
-				targetTwitter = record.Values[16].(string)
-			}
-			if record.Values[17] != nil {
-				targetDescription = record.Values[17].(string)
-			}
-
-			nodes[sourceID] = models.Node{
-				ID:          sourceID,
-				Name:        sourceName,
-				Occupation:  sourceOccupation,
-				Party:       sourceParty,
-				SBStatus:    sourceSBStatus,
-				ImageURL:    sourceImageURL,
-				Twitter:     sourceTwitter,
-				Description: sourceDescription,
-			}
-			nodes[targetID] = models.Node{
-				ID:          targetID,
-				Name:        targetName,
-				Occupation:  targetOccupation,
-				Party:       targetParty,
-				SBStatus:    targetSBStatus,
-				ImageURL:    targetImageURL,
-				Twitter:     targetTwitter,
-				Description: targetDescription,
-			}
-
-			edges = append(edges, models.Edge{
-				Source:  sourceID,
-				Target:  targetID,
-				Type:    relType,
-				Details: relDetails,
+		if targetID, ok := record.Get("target_id"); ok && targetID != nil {
+			relType, _ := record.Get("r.type")
+			details, _ := record.Get("r.details")
+			edges = append(edges, models.Relationship{
+				From:    id.(string),
+				To:      targetID.(string),
+				Type:    relType.(string),
+				Details: details.(string),
 			})
 		}
-
-		graph := models.Graph{}
-		for _, node := range nodes {
-			graph.Nodes = append(graph.Nodes, node)
-		}
-		graph.Edges = edges
-		return graph, nil
-	})
-	if err != nil {
-		return models.Graph{}, err
 	}
-	return result.(models.Graph), nil
+
+	nodeList := make([]models.Person, 0, len(nodes))
+	for _, node := range nodes {
+		nodeList = append(nodeList, node)
+	}
+
+	return models.Graph{Nodes: nodeList, Edges: edges}, nil
+}
+
+func GetPersons(ctx context.Context, driver neo4j.DriverWithContext) ([]models.Person, error) {
+	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx,
+		`MATCH (p:Person) 
+         RETURN p.id, p.name, p.occupation, p.image_url, p.twitter, p.description`,
+		nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query persons: %w", err)
+	}
+
+	var persons []models.Person
+	for result.Next(ctx) {
+		record := result.Record()
+		id, _ := record.Get("p.id")
+		name, _ := record.Get("p.name")
+		occupation, _ := record.Get("p.occupation")
+		imageURL, _ := record.Get("p.image_url")
+		twitter, _ := record.Get("p.twitter")
+		description, _ := record.Get("p.description")
+
+		persons = append(persons, models.Person{
+			ID:          id.(string),
+			Name:        name.(string),
+			Occupation:  occupation.(string),
+			ImageURL:    imageURL.(string),
+			Twitter:     twitter.(string),
+			Description: description.(string),
+		})
+	}
+
+	return persons, nil
+}
+
+func AddUser(ctx context.Context, driver neo4j.DriverWithContext, user models.User) error {
+	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx,
+		`MATCH (u:User) WHERE u.login = $login OR u.email = $email
+         RETURN u`,
+		map[string]interface{}{
+			"login": user.Login,
+			"email": user.Email,
+		})
+	if err != nil {
+		return fmt.Errorf("failed to check existing user: %w", err)
+	}
+	if result.Next(ctx) {
+		return ErrUserExists
+	}
+
+	_, err = session.Run(ctx,
+		`CREATE (u:User {id: $id, login: $login, email: $email, password: $password})`,
+		map[string]interface{}{
+			"id":       user.ID,
+			"login":    user.Login,
+			"email":    user.Email,
+			"password": user.Password,
+		})
+	if err != nil {
+		return fmt.Errorf("failed to add user: %w", err)
+	}
+	return nil
+}
+
+func GetUserByLogin(ctx context.Context, driver neo4j.DriverWithContext, login string) (models.User, error) {
+	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx,
+		`MATCH (u:User {login: $login})
+         RETURN u.id, u.login, u.email, u.password`,
+		map[string]interface{}{"login": login})
+	if err != nil {
+		return models.User{}, fmt.Errorf("failed to query user: %w", err)
+	}
+
+	if result.Next(ctx) {
+		record := result.Record()
+		id, _ := record.Get("u.id")
+		login, _ := record.Get("u.login")
+		email, _ := record.Get("u.email")
+		password, _ := record.Get("u.password")
+
+		return models.User{
+			ID:       id.(string),
+			Login:    login.(string),
+			Email:    email.(string),
+			Password: password.(string),
+		}, nil
+	}
+
+	return models.User{}, fmt.Errorf("user not found")
+}
+
+func GetUserByID(ctx context.Context, driver neo4j.DriverWithContext, id string) (models.User, error) {
+	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx,
+		`MATCH (u:User {id: $id})
+         RETURN u.id, u.login, u.email, u.password`,
+		map[string]interface{}{"id": id})
+	if err != nil {
+		return models.User{}, fmt.Errorf("failed to query user: %w", err)
+	}
+
+	if result.Next(ctx) {
+		record := result.Record()
+		id, _ := record.Get("u.id")
+		login, _ := record.Get("u.login")
+		email, _ := record.Get("u.email")
+		password, _ := record.Get("u.password")
+
+		return models.User{
+			ID:       id.(string),
+			Login:    login.(string),
+			Email:    email.(string),
+			Password: password.(string),
+		}, nil
+	}
+
+	return models.User{}, fmt.Errorf("user not found")
+}
+
+func CreateSession(ctx context.Context, driver neo4j.DriverWithContext, session models.Session) error {
+	neo4jSession := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer neo4jSession.Close(ctx)
+
+	_, err := neo4jSession.Run(ctx,
+		`CREATE (s:Session {id: $id, userId: $userId, expiresAt: $expiresAt})`,
+		map[string]interface{}{
+			"id":        session.ID,
+			"userId":    session.UserID,
+			"expiresAt": session.ExpiresAt,
+		})
+	if err != nil {
+		return fmt.Errorf("failed to create session: %w", err)
+	}
+	return nil
+}
+
+func GetSession(ctx context.Context, driver neo4j.DriverWithContext, sessionID string) (models.Session, error) {
+	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx,
+		`MATCH (s:Session {id: $id})
+         RETURN s.id, s.userId, s.expiresAt`,
+		map[string]interface{}{"id": sessionID})
+	if err != nil {
+		return models.Session{}, fmt.Errorf("failed to query session: %w", err)
+	}
+
+	if result.Next(ctx) {
+		record := result.Record()
+		id, _ := record.Get("s.id")
+		userID, _ := record.Get("s.userId")
+		expiresAt, _ := record.Get("s.expiresAt")
+
+		return models.Session{
+			ID:        id.(string),
+			UserID:    userID.(string),
+			ExpiresAt: expiresAt.(int64),
+		}, nil
+	}
+
+	return models.Session{}, ErrNoSuchSession
+}
+
+func DeleteSession(ctx context.Context, driver neo4j.DriverWithContext, sessionID string) error {
+	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+
+	_, err := session.Run(ctx,
+		`MATCH (s:Session {id: $id})
+         DELETE s`,
+		map[string]interface{}{"id": sessionID})
+	if err != nil {
+		return fmt.Errorf("failed to delete session: %w", err)
+	}
+	return nil
 }
