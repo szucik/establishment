@@ -2,21 +2,23 @@ package database
 
 import (
 	"context"
+	"errors"
 
 	"establishment/v1/establishment/models"
+
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
+var ErrNoSuchPerson = errors.New("no such person")
+
 func ConnectToNeo4j(ctx context.Context) (neo4j.DriverWithContext, error) {
-	uri := "neo4j://localhost:7687" // Adres bazy Neo4j
+	uri := "neo4j://localhost:7687"
 	username := "neo4j"
 	password := "secretgraph"
 	driver, err := neo4j.NewDriverWithContext(uri, neo4j.BasicAuth(username, password, ""))
-
 	if err != nil {
 		return nil, err
 	}
-	// Weryfikacja połączenia z użyciem kontekstu
 	if err := driver.VerifyConnectivity(ctx); err != nil {
 		return nil, err
 	}
@@ -27,7 +29,7 @@ func AddPerson(ctx context.Context, driver neo4j.DriverWithContext, person model
 	session := driver.NewSession(ctx, neo4j.SessionConfig{})
 	defer func() {
 		if err := session.Close(ctx); err != nil {
-			// Logowanie błędu zamknięcia sesji
+			// Log session close error
 		}
 	}()
 
@@ -37,6 +39,8 @@ func AddPerson(ctx context.Context, driver neo4j.DriverWithContext, person model
 				id: $id,
 				name: $name,
 				occupation: $occupation,
+				party: $party,
+				sb_status: $sb_status,
 				image_url: $image_url,
 				twitter: $twitter,
 				description: $description
@@ -48,6 +52,8 @@ func AddPerson(ctx context.Context, driver neo4j.DriverWithContext, person model
 			"id":          person.ID,
 			"name":        person.Name,
 			"occupation":  person.Occupation,
+			"party":       person.Party,
+			"sb_status":   person.SBStatus,
 			"image_url":   person.ImageURL,
 			"twitter":     person.Twitter,
 			"description": person.Description,
@@ -67,7 +73,7 @@ func AddRelationship(ctx context.Context, driver neo4j.DriverWithContext, rel mo
 	session := driver.NewSession(ctx, neo4j.SessionConfig{})
 	defer func() {
 		if err := session.Close(ctx); err != nil {
-			// Logowanie błędu zamknięcia sesji
+			// Log session close error
 		}
 	}()
 
@@ -98,12 +104,12 @@ func GetPersons(ctx context.Context, driver neo4j.DriverWithContext) ([]models.P
 	session := driver.NewSession(ctx, neo4j.SessionConfig{})
 	defer func() {
 		if err := session.Close(ctx); err != nil {
-			// Logowanie błędu zamknięcia sesji
+			// Log session close error
 		}
 	}()
 
 	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `MATCH (p:Person) RETURN p.id, p.name, p.occupation`
+		query := `MATCH (p:Person) RETURN p.id, p.name, p.occupation, p.party, p.sb_status`
 		records, err := tx.Run(ctx, query, nil)
 		if err != nil {
 			return nil, err
@@ -117,6 +123,12 @@ func GetPersons(ctx context.Context, driver neo4j.DriverWithContext) ([]models.P
 				Name:       record.Values[1].(string),
 				Occupation: record.Values[2].(string),
 			}
+			if record.Values[3] != nil {
+				person.Party = record.Values[3].(string)
+			}
+			if record.Values[4] != nil {
+				person.SBStatus = record.Values[4].(string)
+			}
 			persons = append(persons, person)
 		}
 		return persons, nil
@@ -127,11 +139,67 @@ func GetPersons(ctx context.Context, driver neo4j.DriverWithContext) ([]models.P
 	return result.([]models.Person), nil
 }
 
+func GetPerson(ctx context.Context, driver neo4j.DriverWithContext, id string) (models.Person, error) {
+	session := driver.NewSession(ctx, neo4j.SessionConfig{})
+	defer func() {
+		if err := session.Close(ctx); err != nil {
+			// Log session close error
+		}
+	}()
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		query := `
+			MATCH (p:Person {id: $id})
+			RETURN p.id, p.name, p.occupation, p.party, p.sb_status, p.image_url, p.twitter, p.description
+		`
+		params := map[string]interface{}{
+			"id": id,
+		}
+		records, err := tx.Run(ctx, query, params)
+		if err != nil {
+			return nil, err
+		}
+
+		if records.Next(ctx) {
+			record := records.Record()
+			person := models.Person{
+				ID:         record.Values[0].(string),
+				Name:       record.Values[1].(string),
+				Occupation: record.Values[2].(string),
+			}
+			if record.Values[3] != nil {
+				person.Party = record.Values[3].(string)
+			}
+			if record.Values[4] != nil {
+				person.SBStatus = record.Values[4].(string)
+			}
+			if record.Values[5] != nil {
+				person.ImageURL = record.Values[5].(string)
+			}
+			if record.Values[6] != nil {
+				person.Twitter = record.Values[6].(string)
+			}
+			if record.Values[7] != nil {
+				person.Description = record.Values[7].(string)
+			}
+			return person, nil
+		}
+		return nil, ErrNoSuchPerson
+	})
+	if err != nil {
+		return models.Person{}, err
+	}
+	if result == nil {
+		return models.Person{}, ErrNoSuchPerson
+	}
+	return result.(models.Person), nil
+}
+
 func GetGraph(ctx context.Context, driver neo4j.DriverWithContext) (models.Graph, error) {
 	session := driver.NewSession(ctx, neo4j.SessionConfig{})
 	defer func() {
 		if err := session.Close(ctx); err != nil {
-			// Logowanie błędu zamknięcia sesji
+			// Log session close error
 		}
 	}()
 
@@ -139,9 +207,9 @@ func GetGraph(ctx context.Context, driver neo4j.DriverWithContext) (models.Graph
 		query := `
             MATCH (p:Person)-[r:RELATION]->(p2:Person)
             RETURN 
-                p.id, p.name, p.occupation, p.image_url, p.twitter, p.description,
+                p.id, p.name, p.occupation, p.party, p.sb_status, p.image_url, p.twitter, p.description,
                 r.type, r.details,
-                p2.id, p2.name, p2.occupation, p2.image_url, p2.twitter, p2.description
+                p2.id, p2.name, p2.occupation, p2.party, p2.sb_status, p2.image_url, p2.twitter, p2.description
         `
 		records, err := tx.Run(ctx, query, nil)
 		if err != nil {
@@ -154,49 +222,55 @@ func GetGraph(ctx context.Context, driver neo4j.DriverWithContext) (models.Graph
 		for records.Next(ctx) {
 			record := records.Record()
 
-			// Dane źródła (p)
 			sourceID := record.Values[0].(string)
 			sourceName := record.Values[1].(string)
 			sourceOccupation := record.Values[2].(string)
-
-			var sourceImageURL, sourceTwitter, sourceDescription string
-
+			var sourceParty, sourceSBStatus, sourceImageURL, sourceTwitter, sourceDescription string
 			if record.Values[3] != nil {
-				sourceImageURL = record.Values[3].(string)
+				sourceParty = record.Values[3].(string)
 			}
 			if record.Values[4] != nil {
-				sourceTwitter = record.Values[4].(string)
+				sourceSBStatus = record.Values[4].(string)
 			}
 			if record.Values[5] != nil {
-				sourceDescription = record.Values[5].(string)
+				sourceImageURL = record.Values[5].(string)
+			}
+			if record.Values[6] != nil {
+				sourceTwitter = record.Values[6].(string)
+			}
+			if record.Values[7] != nil {
+				sourceDescription = record.Values[7].(string)
 			}
 
-			// Relacja
-			relType := record.Values[6].(string)
-			relDetails := record.Values[7].(string)
+			relType := record.Values[8].(string)
+			relDetails := record.Values[9].(string)
 
-			// Dane celu (p2)
-			targetID := record.Values[8].(string)
-			targetName := record.Values[9].(string)
-			targetOccupation := record.Values[10].(string)
-
-			var targetImageURL, targetTwitter, targetDescription string
-
-			if record.Values[11] != nil {
-				targetImageURL = record.Values[11].(string)
-			}
-			if record.Values[12] != nil {
-				targetTwitter = record.Values[12].(string)
-			}
+			targetID := record.Values[10].(string)
+			targetName := record.Values[11].(string)
+			targetOccupation := record.Values[12].(string)
+			var targetParty, targetSBStatus, targetImageURL, targetTwitter, targetDescription string
 			if record.Values[13] != nil {
-				targetDescription = record.Values[13].(string)
+				targetParty = record.Values[13].(string)
+			}
+			if record.Values[14] != nil {
+				targetSBStatus = record.Values[14].(string)
+			}
+			if record.Values[15] != nil {
+				targetImageURL = record.Values[15].(string)
+			}
+			if record.Values[16] != nil {
+				targetTwitter = record.Values[16].(string)
+			}
+			if record.Values[17] != nil {
+				targetDescription = record.Values[17].(string)
 			}
 
-			// Dodajemy węzły do mapy (unikalne)
 			nodes[sourceID] = models.Node{
 				ID:          sourceID,
 				Name:        sourceName,
 				Occupation:  sourceOccupation,
+				Party:       sourceParty,
+				SBStatus:    sourceSBStatus,
 				ImageURL:    sourceImageURL,
 				Twitter:     sourceTwitter,
 				Description: sourceDescription,
@@ -205,12 +279,13 @@ func GetGraph(ctx context.Context, driver neo4j.DriverWithContext) (models.Graph
 				ID:          targetID,
 				Name:        targetName,
 				Occupation:  targetOccupation,
+				Party:       targetParty,
+				SBStatus:    targetSBStatus,
 				ImageURL:    targetImageURL,
 				Twitter:     targetTwitter,
 				Description: targetDescription,
 			}
 
-			// Dodajemy krawędź
 			edges = append(edges, models.Edge{
 				Source:  sourceID,
 				Target:  targetID,

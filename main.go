@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"establishment/v1/establishment/models"
@@ -24,7 +25,7 @@ func main() {
 	}
 	defer driver.Close(ctx)
 
-	http.Handle("/person", enableCORS(http.HandlerFunc(handlePerson)))
+	http.Handle("/person/", enableCORS(http.HandlerFunc(handlePerson)))
 	http.Handle("/relationship", enableCORS(http.HandlerFunc(handleRelationship)))
 	http.Handle("/graph", enableCORS(http.HandlerFunc(handleGraph)))
 	http.Handle("/persons", enableCORS(http.HandlerFunc(handlePersons)))
@@ -36,28 +37,51 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
-// POST /person
+// POST /person or GET /person/:id
 func handlePerson(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Tylko POST", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var person models.Person
-	if err := json.NewDecoder(r.Body).Decode(&person); err != nil {
-		http.Error(w, "Błędne dane wejściowe", http.StatusBadRequest)
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := database.AddPerson(ctx, driver, person); err != nil {
-		http.Error(w, "Nie udało się dodać osoby: "+err.Error(), http.StatusInternalServerError)
+	if r.Method == http.MethodGet {
+		// Handle GET /person/:id
+		id := strings.TrimPrefix(r.URL.Path, "/person/")
+		if id == "" {
+			http.Error(w, "Brak ID osoby", http.StatusBadRequest)
+			return
+		}
+
+		person, err := database.GetPerson(ctx, driver, id)
+		if err == database.ErrNoSuchPerson {
+			http.Error(w, "Osoba nie znaleziona", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			http.Error(w, "Błąd pobierania osoby: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		writeJSON(w, person)
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
+	if r.Method == http.MethodPost {
+		// Handle POST /person
+		var person models.Person
+		if err := json.NewDecoder(r.Body).Decode(&person); err != nil {
+			http.Error(w, "Błędne dane wejściowe", http.StatusBadRequest)
+			return
+		}
+
+		if err := database.AddPerson(ctx, driver, person); err != nil {
+			http.Error(w, "Nie udało się dodać osoby: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		return
+	}
+
+	http.Error(w, "Tylko GET lub POST", http.StatusMethodNotAllowed)
 }
 
 // POST /relationship
