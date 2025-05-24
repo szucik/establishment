@@ -1,28 +1,17 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Political Connections</title>
+    <title>Polityczne powiązania</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <style>
-        body {
-            font-family: 'Arial', sans-serif;
-        }
-        .node circle {
-            stroke: #fff;
-            stroke-width: 1.5px;
-        }
-        .node text {
-            font-size: 12px;
-            pointer-events: none;
-        }
-        .link {
-            stroke: #999;
-            stroke-opacity: 0.6;
-        }
+        body { font-family: 'Arial', sans-serif; }
+        .node circle { stroke: #fff; stroke-width: 1.5px; }
+        .node text { font-size: 12px; pointer-events: none; }
+        .link { stroke: #999; stroke-opacity: 0.6; }
         .tooltip {
             position: absolute;
             background: rgba(0, 0, 0, 0.8);
@@ -35,61 +24,62 @@
 </head>
 <body class="bg-gray-100">
 <div id="app" class="container mx-auto p-4">
-    <h1 class="text-2xl font-bold mb-4">Political Connections</h1>
+    <h1 class="text-2xl font-bold mb-4">Polityczne powiązania</h1>
 
     <div v-if="error" class="mb-6 bg-red-100 p-4 rounded shadow text-red-700">
         {{ error }}
     </div>
 
     <div v-if="!isLoggedIn" class="mb-6 bg-yellow-100 p-4 rounded shadow text-yellow-700">
-        You must be logged in to access this page. <a href="/static/login.html" class="text-blue-500 hover:underline">Go to login</a>
+        Musisz się zalogować, aby uzyskać dostęp do tej strony. <a href="/static/login.html" class="text-blue-500 hover:underline">Przejdź do logowania</a>
     </div>
 
     <div v-if="isLoggedIn">
-        <!-- Logged in user info -->
         <div class="mb-6 bg-white p-4 rounded shadow">
-            <h2 class="text-xl mb-2">Logged in as {{ userLogin }}</h2>
-            <button @click="logout" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Logout</button>
+            <h2 class="text-xl mb-2">Zalogowano jako {{ userLogin }}</h2>
+            <button @click="logout" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Wyloguj</button>
         </div>
 
-        <!-- Form to add person -->
         <div class="mb-6 bg-white p-4 rounded shadow">
-            <h2 class="text-xl mb-2">Add Person</h2>
+            <h2 class="text-xl mb-2">Dodaj osobę</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <input v-model="newPerson.name" placeholder="Name" class="border p-2 rounded">
+                <input v-model="newPerson.name" placeholder="Imię i nazwisko" class="border p-2 rounded">
                 <select v-model="newPerson.occupation" class="border p-2 rounded">
                     <option value="Polityk">Polityk</option>
                     <option value="Dziennikarz">Dziennikarz</option>
                 </select>
-                <input v-model="newPerson.image_url" placeholder="Image URL" class="border p-2 rounded">
-                <input v-model="newPerson.twitter" placeholder="Twitter Handle" class="border p-2 rounded">
-                <textarea v-model="newPerson.description" placeholder="Description" class="border p-2 rounded col-span-2"></textarea>
+                <input v-model="newPerson.image_url" placeholder="URL zdjęcia" class="border p-2 rounded">
+                <input v-model="newPerson.twitter" placeholder="Twitter" class="border p-2 rounded">
+                <textarea v-model="newPerson.description" placeholder="Opis" class="border p-2 rounded col-span-2"></textarea>
             </div>
-            <button @click="addPerson" class="mt-2 bg-blue-500 text-white p-2 rounded hover:bg-blue-600">Add Person</button>
+            <button @click="addPerson" class="mt-2 bg-blue-500 text-white p-2 rounded hover:bg-blue-600">Dodaj osobę</button>
         </div>
 
-        <!-- Form to add relationship -->
         <div class="mb-6 bg-white p-4 rounded shadow">
-            <h2 class="text-xl mb-2">Add Relationship</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <select v-model="newRelationship.source_id" class="border p-2 rounded">
+            <h2 class="text-xl mb-2">Dodaj relację</h2>
+            <div v-if="persons.length < 2" class="text-red-500 mb-2">
+                Potrzebujesz co najmniej dwóch osób, aby dodać relację. Aktualnie masz {{ persons.length }} {{ persons.length === 1 ? 'osobę' : 'osób' }}.
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4" v-else>
+                <select v-model="newRelationship.source_id" @change="validateRelationship" class="border p-2 rounded">
+                    <option value="" disabled>Wybierz osobę źródłową</option>
                     <option v-for="person in persons" :value="person.id" :key="person.id">{{ person.name }}</option>
                 </select>
-                <select v-model="newRelationship.target_id" class="border p-2 rounded">
+                <select v-model="newRelationship.target_id" @change="validateRelationship" class="border p-2 rounded">
+                    <option value="" disabled>Wybierz osobę docelową</option>
                     <option v-for="person in persons" :value="person.id" :key="person.id">{{ person.name }}</option>
                 </select>
                 <select v-model="newRelationship.type" class="border p-2 rounded">
-                    <option value="FAMILY">Family</option>
-                    <option value="COLLEAGUE">Colleague</option>
+                    <option value="FAMILY">Rodzina</option>
+                    <option value="COLLEAGUE">Współpracownik</option>
                 </select>
-                <input v-model="newRelationship.details" placeholder="Details" class="border p-2 rounded">
+                <input v-model="newRelationship.details" placeholder="Szczegóły" class="border p-2 rounded">
             </div>
-            <button @click="addRelationship" class="mt-2 bg-blue-500 text-white p-2 rounded hover:bg-blue-600">Add Relationship</button>
+            <button @click="addRelationship" class="mt-2 bg-blue-500 text-white p-2 rounded hover:bg-blue-600" :disabled="isAddRelationshipDisabled">Dodaj relację</button>
         </div>
 
-        <!-- Persons list -->
         <div class="mb-6 bg-white p-4 rounded shadow">
-            <h2 class="text-xl mb-2">Persons</h2>
+            <h2 class="text-xl mb-2">Osoby</h2>
             <ul class="list-disc pl-5">
                 <li v-for="person in persons" :key="person.id" class="mb-2">
                     {{ person.name }} ({{ person.occupation }})
@@ -97,16 +87,15 @@
             </ul>
         </div>
 
-        <!-- Graph visualization -->
         <div class="bg-white p-4 rounded shadow">
-            <h2 class="text-xl mb-2">Relationship Graph</h2>
+            <h2 class="text-xl mb-2">Graf relacji</h2>
             <div id="graph"></div>
         </div>
     </div>
 </div>
 
 <script>
-    const { createApp, ref, onMounted } = Vue;
+    const { createApp, ref, onMounted, computed } = Vue;
 
     createApp({
         setup() {
@@ -130,70 +119,100 @@
                 details: ''
             });
 
+            const isAddRelationshipDisabled = computed(() => {
+                return persons.value.length < 2 ||
+                    !newRelationship.value.source_id ||
+                    !newRelationship.value.target_id ||
+                    newRelationship.value.source_id === newRelationship.value.target_id;
+            });
+
+            const validateRelationship = () => {
+                if (newRelationship.value.source_id && newRelationship.value.target_id &&
+                    newRelationship.value.source_id === newRelationship.value.target_id) {
+                    error.value = 'Osoba źródłowa i docelowa nie mogą być takie same';
+                } else {
+                    error.value = '';
+                }
+            };
+
             const checkSession = async () => {
                 try {
-                    console.log('Checking session...');
+                    console.log('Sprawdzanie sesji na http://localhost:8080/check-session');
                     const response = await fetch('http://localhost:8080/check-session', {
                         method: 'GET',
                         credentials: 'include'
                     });
-                    console.log('Check-session response:', response.status, response.statusText);
+                    console.log('Odpowiedź check-session:', response.status, response.statusText);
                     if (response.ok) {
                         const data = await response.json();
-                        console.log('Session data:', data);
+                        console.log('Dane sesji:', data);
                         isLoggedIn.value = true;
                         userLogin.value = data.login;
                     } else {
-                        console.log('Session check failed:', response.status, response.statusText);
+                        console.log('Nieudane sprawdzanie sesji:', response.status, response.statusText);
                         isLoggedIn.value = false;
                         userLogin.value = '';
-                        error.value = `Session check failed: ${response.status} ${response.statusText}`;
+                        error.value = `Błąd sprawdzania sesji: ${response.status} ${response.statusText}`;
                     }
                 } catch (err) {
-                    console.error('Error checking session:', err);
+                    console.error('Błąd sprawdzania sesji:', err);
                     isLoggedIn.value = false;
                     userLogin.value = '';
-                    error.value = 'Error checking session: ' + err.message;
+                    error.value = 'Błąd sprawdzania sesji: ' + err.message;
                 }
             };
 
             const fetchPersons = async () => {
                 try {
-                    const response = await fetch('http://localhost:8080/persons');
+                    console.log('Pobieranie osób z http://localhost:8080/persons');
+                    const response = await fetch('http://localhost:8080/persons', { credentials: 'include' });
+                    console.log('Odpowiedź persons:', response.status, response.statusText);
                     if (response.ok) {
                         persons.value = await response.json();
+                        console.log('Pobrano osoby:', persons.value);
                     } else {
-                        error.value = `Error fetching persons: ${response.status} ${response.statusText}`;
+                        error.value = `Błąd pobierania osób: ${response.status} ${response.statusText}`;
                     }
                 } catch (error) {
-                    console.error('Error fetching persons:', error);
-                    error.value = 'Error fetching persons: ' + error.message;
+                    console.error('Błąd pobierania osób:', error);
+                    error.value = 'Błąd pobierania osób: ' + error.message;
                 }
             };
 
             const fetchGraph = async () => {
                 try {
-                    const response = await fetch('http://localhost:8080/graph');
+                    console.log('Pobieranie grafu z http://localhost:8080/graph');
+                    const response = await fetch('http://localhost:8080/graph', { credentials: 'include' });
+                    console.log('Odpowiedź graph:', response.status, response.statusText);
                     if (response.ok) {
                         graph.value = await response.json();
+                        console.log('Dane grafu:', JSON.stringify(graph.value, null, 2));
                         renderGraph();
                     } else {
-                        error.value = `Error fetching graph: ${response.status} ${response.statusText}`;
+                        error.value = `Błąd pobierania grafu: ${response.status} ${response.statusText}`;
                     }
                 } catch (error) {
-                    console.error('Error fetching graph:', error);
-                    error.value = 'Error fetching graph: ' + error.message;
+                    console.error('Błąd pobierania grafu:', error);
+                    error.value = 'Błąd pobierania grafu: ' + error.message;
                 }
             };
 
             const addPerson = async () => {
+                if (!newPerson.value.name) {
+                    error.value = 'Imię i nazwisko są wymagane';
+                    return;
+                }
                 try {
+                    console.log('Dodawanie osoby:', JSON.stringify(newPerson.value, null, 2));
                     const response = await fetch('http://localhost:8080/person', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(newPerson.value),
                         credentials: 'include'
                     });
+                    const responseText = await response.text();
+                    console.log('Odpowiedź addPerson:', response.status, response.statusText, responseText);
+
                     if (response.ok) {
                         await fetchPersons();
                         await fetchGraph();
@@ -206,23 +225,45 @@
                             description: ''
                         };
                     } else {
-                        error.value = `Error adding person: ${response.status} ${response.statusText}`;
+                        error.value = `Błąd dodawania osoby: ${response.status} ${response.statusText} - ${responseText}`;
                     }
                 } catch (error) {
-                    console.error('Error adding person:', error);
-                    error.value = 'Error adding person: ' + error.message;
+                    console.error('Błąd dodawania osoby:', error);
+                    error.value = 'Błąd dodawania osoby: ' + error.message;
                 }
             };
 
             const addRelationship = async () => {
+                if (persons.value.length < 2) {
+                    error.value = 'Potrzebujesz co najmniej dwóch osób, aby dodać relację.';
+                    return;
+                }
+                if (!newRelationship.value.source_id || !newRelationship.value.target_id) {
+                    error.value = 'Wybierz obie osoby (źródłową i docelową)';
+                    return;
+                }
+                if (newRelationship.value.source_id === newRelationship.value.target_id) {
+                    error.value = 'Osoba źródłowa i docelowa nie mogą być takie same';
+                    return;
+                }
                 try {
+                    const relationshipData = {
+                        source_id: newRelationship.value.source_id,
+                        target_id: newRelationship.value.target_id,
+                        type: newRelationship.value.type,
+                        details: newRelationship.value.details
+                    };
+                    console.log('Dodawanie relacji:', JSON.stringify(relationshipData, null, 2));
                     const response = await fetch('http://localhost:8080/relationship', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(newRelationship.value),
+                        body: JSON.stringify(relationshipData),
                         credentials: 'include'
                     });
+                    const responseText = await response.text();
+                    console.log('Odpowiedź addRelationship:', response.status, response.statusText, responseText);
                     if (response.ok) {
+                        await fetchPersons();
                         await fetchGraph();
                         newRelationship.value = {
                             source_id: '',
@@ -231,107 +272,162 @@
                             details: ''
                         };
                     } else {
-                        error.value = `Error adding relationship: ${response.status} ${response.statusText}`;
+                        error.value = `Błąd dodawania relacji: ${response.status} ${response.statusText} - ${responseText}`;
                     }
                 } catch (error) {
-                    console.error('Error adding relationship:', error);
-                    error.value = 'Error adding relationship: ' + error.message;
+                    console.error('Błąd dodawania relacji:', error);
+                    error.value = 'Błąd dodawania relacji: ' + error.message;
                 }
             };
 
             const logout = async () => {
                 try {
+                    console.log('Wylogowywanie z http://localhost:8080/logout');
                     const response = await fetch('http://localhost:8080/logout', {
                         method: 'POST',
                         credentials: 'include'
                     });
+                    console.log('Odpowiedź logout:', response.status, response.statusText);
                     if (response.ok) {
                         isLoggedIn.value = false;
                         userLogin.value = '';
                         window.location.href = '/static/login.html';
                     } else {
-                        error.value = `Error logging out: ${response.status} ${response.statusText}`;
+                        error.value = `Błąd wylogowania: ${response.status} ${response.statusText}`;
                     }
                 } catch (error) {
-                    console.error('Error logging out:', error);
-                    error.value = 'Error logging out: ' + error.message;
+                    console.error('Błąd wylogowania:', error);
+                    error.value = 'Błąd wylogowania: ' + error.message;
                 }
             };
 
             const renderGraph = () => {
+                console.log('Renderowanie grafu z danymi:', JSON.stringify(graph.value, null, 2));
                 const width = 800;
                 const height = 600;
 
-                d3.select('#graph').selectAll('*').remove();
-                const svg = d3.select('#graph')
-                    .append('svg')
-                    .attr('width', width)
-                    .attr('height', height);
+                if (!graph.value.nodes || !graph.value.edges) {
+                    console.warn('Brak danych grafu: nodes lub edges są undefined');
+                    error.value = 'Brak danych grafu do wyświetlenia';
+                    return;
+                }
 
-                const simulation = d3.forceSimulation(graph.value.nodes)
-                    .force('link', d3.forceLink(graph.value.edges).id(d => d.id).distance(100))
-                    .force('charge', d3.forceManyBody().strength(-300))
-                    .force('center', d3.forceCenter(width / 2, height / 2));
+                const nodeIds = new Set(graph.value.nodes.map(node => node.id));
+                const validEdges = graph.value.edges.map(edge => {
+                    const from = edge.source_id || edge.from;
+                    const to = edge.target_id || edge.to;
+                    if (!from || !to || !nodeIds.has(from) || !nodeIds.has(to) || from === to) {
+                        console.warn('Nieprawidłowa krawędź:', edge);
+                        return null;
+                    }
+                    return {
+                        source: from,
+                        target: to,
+                        type: edge.type,
+                        details: edge.details
+                    };
+                }).filter(edge => edge !== null);
 
-                const link = svg.append('g')
-                    .attr('class', 'link')
-                    .selectAll('line')
-                    .data(graph.value.edges)
-                    .enter()
-                    .append('line')
-                    .attr('stroke-width', 2)
-                    .attr('stroke', d => d.type === 'FAMILY' ? '#ff9999' : '#99ccff');
+                console.log('Valid edges:', JSON.stringify(validEdges, null, 2));
 
-                const node = svg.append('g')
-                    .attr('class', 'node')
-                    .selectAll('g')
-                    .data(graph.value.nodes)
-                    .enter()
-                    .append('g');
+                if (validEdges.length !== graph.value.edges.length) {
+                    error.value = `Niektóre relacje są nieprawidłowe i zostały pominięte. Sprawdź konsolę dla szczegółów.`;
+                }
 
-                node.append('circle')
-                    .attr('r', 10)
-                    .attr('fill', d => d.occupation === 'Polityk' ? '#ff4444' : '#44cc44');
+                if (graph.value.nodes.length === 0) {
+                    d3.select('#graph').selectAll('*').remove();
+                    error.value = 'Brak osób do wyświetlenia w grafie';
+                    return;
+                }
 
-                node.append('text')
-                    .attr('dx', 12)
-                    .attr('dy', '.35em')
-                    .text(d => d.name);
+                const svg = d3.select('#graph').select('svg');
+                if (svg.empty()) {
+                    d3.select('#graph')
+                        .append('svg')
+                        .attr('width', width)
+                        .attr('height', height);
+                }
 
-                const tooltip = d3.select('body')
-                    .append('div')
-                    .attr('class', 'tooltip')
-                    .style('opacity', 0);
+                try {
+                    console.log('Tworzenie symulacji D3 z %d węzłami i %d krawędziami', graph.value.nodes.length, validEdges.length);
+                    const simulation = d3.forceSimulation(graph.value.nodes)
+                        .force('link', d3.forceLink(validEdges).id(d => d.id).distance(100))
+                        .force('charge', d3.forceManyBody().strength(-300))
+                        .force('center', d3.forceCenter(width / 2, height / 2));
 
-                node.on('mouseover', function(event, d) {
-                    tooltip.transition()
-                        .duration(200)
-                        .style('opacity', .9);
-                    tooltip.html(`
-                            <strong>${d.name}</strong><br>
-                            Occupation: ${d.occupation}<br>
-                            ${d.description ? 'Description: ' + d.description + '<br>' : ''}
-                            ${d.twitter ? 'Twitter: ' + d.twitter : ''}
-                        `)
-                        .style('left', (event.pageX + 10) + 'px')
-                        .style('top', (event.pageY - 28) + 'px');
-                })
-                    .on('mouseout', function() {
-                        tooltip.transition()
-                            .duration(500)
+                    const link = d3.select('#graph svg')
+                        .selectAll('.link')
+                        .data(validEdges, d => `${d.source}-${d.target}`)
+                        .join('line')
+                        .attr('class', 'link')
+                        .attr('stroke-width', 2)
+                        .attr('stroke', d => d.type === 'FAMILY' ? '#ff9999' : '#99ccff');
+
+                    const node = d3.select('#graph svg')
+                        .selectAll('.node')
+                        .data(graph.value.nodes, d => d.id)
+                        .join('g')
+                        .attr('class', 'node');
+
+                    node.selectAll('circle')
+                        .data(d => [d])
+                        .join('circle')
+                        .attr('r', 10)
+                        .attr('fill', d => d.occupation === 'Polityk' ? '#ff4444' : '#44cc44');
+
+                    node.selectAll('text')
+                        .data(d => [d])
+                        .join('text')
+                        .attr('dx', 12)
+                        .attr('dy', '.35em')
+                        .text(d => d.name);
+
+                    const tooltip = d3.select('body').select('.tooltip');
+                    if (tooltip.empty()) {
+                        d3.select('body')
+                            .append('div')
+                            .attr('class', 'tooltip')
                             .style('opacity', 0);
+                    }
+
+                    node.on('mouseover', function(event, d) {
+                        const tooltip = d3.select('.tooltip');
+                        tooltip
+                            .html(`
+                                <strong>${d.name}</strong><br>
+                                Zawód: ${d.occupation}<br>
+                                ${d.description ? 'Opis: ' + d.description + '<br>' : ''}
+                                ${d.twitter ? 'Twitter: ' + d.twitter : ''}
+                            `);
+                        tooltip
+                            .transition()
+                            .duration(200)
+                            .style('opacity', .9)
+                            .style('left', (event.pageX + 10) + 'px')
+                            .style('top', (event.pageY - 28) + 'px');
+                    })
+                        .on('mouseout', function() {
+                            d3.select('.tooltip')
+                                .transition()
+                                .duration(500)
+                                .style('opacity', 0);
+                        });
+
+                    simulation.on('tick', () => {
+                        link
+                            .attr('x1', d => d.source.x)
+                            .attr('y1', d => d.source.y)
+                            .attr('x2', d => d.target.x)
+                            .attr('y2', d => d.target.y);
+
+                        node
+                            .attr('transform', d => `translate(${d.x},${d.y})`);
                     });
-
-                simulation.on('tick', () => {
-                    link
-                        .attr('x1', d => d.source.x)
-                        .attr('y1', d => d.source.y)
-                        .attr('x2', d => d.target.x)
-                        .attr('y2', d => d.target.y);
-
-                    node
-                        .attr('transform', d => `translate(${d.x},${d.y})`);
-                });
+                    console.log('Graf wyrenderowany pomyślnie');
+                } catch (err) {
+                    console.error('Błąd renderowania grafu:', err);
+                    error.value = 'Błąd renderowania grafu: ' + err.message;
+                }
             };
 
             onMounted(async () => {
@@ -351,7 +447,9 @@
                 newRelationship,
                 addPerson,
                 addRelationship,
-                logout
+                logout,
+                validateRelationship,
+                isAddRelationshipDisabled
             };
         }
     }).mount('#app');

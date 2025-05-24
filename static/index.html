@@ -87,24 +87,66 @@
     createApp({
         setup() {
             const graph = ref({ nodes: [], edges: [] });
+            const error = ref('');
 
             const fetchGraph = async () => {
                 try {
+                    console.log('Pobieranie grafu z http://localhost:8080/graph');
                     const response = await fetch('http://localhost:8080/graph');
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! Status: ${response.status}`);
+                    console.log('Odpowiedź graph:', response.status, response.statusText);
+                    if (response.ok) {
+                        graph.value = await response.json();
+                        console.log('Dane grafu:', JSON.stringify(graph.value, null, 2));
+                        renderGraph();
+                    } else {
+                        error.value = `Błąd pobierania grafu: ${response.status} ${response.statusText}`;
+                        console.error('Błąd pobierania grafu:', response.status, response.statusText);
                     }
-                    graph.value = await response.json();
-                    renderGraph();
                 } catch (error) {
+                    error.value = 'Błąd pobierania grafu: ' + error.message;
                     console.error('Błąd pobierania grafu:', error);
                 }
             };
 
             const renderGraph = () => {
+                console.log('Renderowanie grafu z danymi:', JSON.stringify(graph.value, null, 2));
                 const container = d3.select('#graph').node();
                 const width = container.getBoundingClientRect().width;
                 const height = 600;
+
+                if (!graph.value.nodes || !graph.value.edges) {
+                    console.warn('Brak danych grafu: nodes lub edges są undefined');
+                    error.value = 'Brak danych grafu do wyświetlenia';
+                    return;
+                }
+
+                const nodeIds = new Set(graph.value.nodes.map(node => node.id));
+                const validEdges = graph.value.edges.map(edge => {
+                    const from = edge.source_id || edge.from;
+                    const to = edge.target_id || edge.to;
+                    if (!from || !to || !nodeIds.has(from) || !nodeIds.has(to) || from === to) {
+                        console.warn('Nieprawidłowa krawędź:', edge);
+                        return null;
+                    }
+                    return {
+                        source: from,
+                        target: to,
+                        type: edge.type,
+                        details: edge.details
+                    };
+                }).filter(edge => edge !== null);
+
+                console.log('Valid edges:', JSON.stringify(validEdges, null, 2));
+
+                if (validEdges.length !== graph.value.edges.length) {
+                    error.value = `Niektóre relacje są nieprawidłowe i zostały pominięte. Sprawdź konsolę dla szczegółów.`;
+                }
+
+                if (graph.value.nodes.length === 0) {
+                    d3.select('#graph').selectAll('*').remove();
+                    error.value = 'Brak osób do wyświetlenia w grafie';
+                    return;
+                }
 
                 d3.select('#graph').selectAll('*').remove();
                 const svg = d3.select('#graph')
@@ -140,7 +182,7 @@
                     .attr('stop-color', '#78FFD6');
 
                 const simulation = d3.forceSimulation(graph.value.nodes)
-                    .force('link', d3.forceLink(graph.value.edges).id(d => d.id).distance(120).strength(0.15))
+                    .force('link', d3.forceLink(validEdges).id(d => d.id).distance(120).strength(0.15))
                     .force('charge', d3.forceManyBody().strength(-600))
                     .force('center', d3.forceCenter(width / 2, height / 2).strength(0.2))
                     .force('collision', d3.forceCollide().radius(30))
@@ -150,7 +192,7 @@
                 const link = svg.append('g')
                     .attr('class', 'link')
                     .selectAll('g')
-                    .data(graph.value.edges)
+                    .data(validEdges)
                     .enter()
                     .append('g');
 
@@ -213,28 +255,35 @@
                     .attr('fill', '#E2E8F0')
                     .attr('font-size', '12px');
 
-                const tooltip = d3.select('body')
-                    .append('div')
-                    .attr('class', 'tooltip')
-                    .style('opacity', 0);
+                const tooltip = d3.select('body').select('.tooltip');
+                if (tooltip.empty()) {
+                    d3.select('body')
+                        .append('div')
+                        .attr('class', 'tooltip')
+                        .style('opacity', 0);
+                }
 
                 node.on('mouseover', function(event, d) {
-                    tooltip.transition()
-                        .duration(200)
-                        .style('opacity', .9);
-                    tooltip.html(`
+                    const tooltip = d3.select('.tooltip');
+                    tooltip
+                        .html(`
                             <strong>${d.name}</strong><br>
                             Zawód: ${d.occupation}<br>
                             ${d.party ? 'Partia: ' + d.party + '<br>' : ''}
                             ${d.sb_status ? 'Status SB/PRL: ' + d.sb_status + '<br>' : ''}
                             ${d.description ? 'Opis: ' + d.description + '<br>' : ''}
                             ${d.twitter ? 'Twitter: ' + d.twitter : ''}
-                        `)
+                        `);
+                    tooltip
+                        .transition()
+                        .duration(200)
+                        .style('opacity', .9)
                         .style('left', Math.min(event.pageX + 10, window.innerWidth - 200) + 'px')
                         .style('top', Math.min(event.pageY - 28, window.innerHeight - 100) + 'px');
                 })
                     .on('mouseout', function() {
-                        tooltip.transition()
+                        d3.select('.tooltip')
+                            .transition()
                             .duration(500)
                             .style('opacity', 0);
                     });
@@ -285,7 +334,8 @@
             });
 
             return {
-                graph
+                graph,
+                error
             };
         }
     }).mount('#app');
