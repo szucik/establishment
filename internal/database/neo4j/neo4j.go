@@ -7,8 +7,7 @@ import (
 	"log"
 	"os"
 
-	"establishment/v1/establishment/models"
-
+	"establishment/v1/internal/models"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -19,7 +18,13 @@ var (
 	ErrInvalidRelationship = errors.New("source and target IDs must be different")
 )
 
-func ConnectToNeo4j(ctx context.Context) (neo4j.DriverWithContext, error) {
+// Neo4jDB wraps a Neo4j driver and implements the Database interface.
+type Neo4jDB struct {
+	Driver neo4j.DriverWithContext
+}
+
+// ConnectToNeo4j establishes a connection to the Neo4j database.
+func ConnectToNeo4j(ctx context.Context) (*Neo4jDB, error) {
 	neo4jURI := os.Getenv("NEO4J_URI")
 	neo4jUser := os.Getenv("NEO4J_USER")
 	neo4jPassword := os.Getenv("NEO4J_PASSWORD")
@@ -46,11 +51,12 @@ func ConnectToNeo4j(ctx context.Context) (neo4j.DriverWithContext, error) {
 		return nil, fmt.Errorf("failed to verify Neo4j connectivity: %w", err)
 	}
 	log.Println("Successfully connected to Neo4j")
-	return driver, nil
+	return &Neo4jDB{Driver: driver}, nil
 }
 
-func AddPerson(ctx context.Context, driver neo4j.DriverWithContext, person models.Person) error {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+// AddPerson adds a person to the database.
+func (db *Neo4jDB) AddPerson(ctx context.Context, person models.Person) error {
+	session := db.Driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer session.Close(ctx)
 
 	log.Printf("Adding person: id=%s, name=%s, occupation=%s", person.ID, person.Name, person.Occupation)
@@ -80,8 +86,9 @@ func AddPerson(ctx context.Context, driver neo4j.DriverWithContext, person model
 	return nil
 }
 
-func GetPerson(ctx context.Context, driver neo4j.DriverWithContext, id string) (models.Person, error) {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+// GetPerson retrieves a person by their ID.
+func (db *Neo4jDB) GetPerson(ctx context.Context, id string) (models.Person, error) {
+	session := db.Driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
 	defer session.Close(ctx)
 
 	result, err := session.Run(ctx,
@@ -89,6 +96,7 @@ func GetPerson(ctx context.Context, driver neo4j.DriverWithContext, id string) (
 		 RETURN p.id, p.name, p.occupation, p.image_url, p.twitter, p.description`,
 		map[string]interface{}{"id": id})
 	if err != nil {
+		log.Printf("Failed to query person for ID %s: %v", id, err)
 		return models.Person{}, fmt.Errorf("failed to query person: %w", err)
 	}
 
@@ -104,27 +112,28 @@ func GetPerson(ctx context.Context, driver neo4j.DriverWithContext, id string) (
 		return models.Person{
 			ID:          id.(string),
 			Name:        name.(string),
-			Occupation:  occupation.(string),
-			ImageURL:    imageURL.(string),
-			Twitter:     twitter.(string),
-			Description: description.(string),
+			Occupation:  safeString(occupation),
+			ImageURL:    safeString(imageURL),
+			Twitter:     safeString(twitter),
+			Description: safeString(description),
 		}, nil
 	}
 
+	log.Printf("Person not found for ID: %s", id)
 	return models.Person{}, ErrNoSuchPerson
 }
 
-func AddRelationship(ctx context.Context, driver neo4j.DriverWithContext, rel models.Relationship) error {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-	defer session.Close(ctx)
-
-	// Sprawdź, czy source_id i target_id są różne
+// AddRelationship adds a relationship between two persons.
+func (db *Neo4jDB) AddRelationship(ctx context.Context, rel models.Relationship) error {
 	if rel.From == rel.To {
 		log.Printf("Invalid relationship: source_id=%s and target_id=%s are the same", rel.From, rel.To)
 		return ErrInvalidRelationship
 	}
 
 	log.Printf("Verifying persons for relationship: source_id=%s, target_id=%s", rel.From, rel.To)
+
+	session := db.Driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
 
 	result, err := session.Run(ctx,
 		`MATCH (a:Person {id: $from}), (b:Person {id: $to})
@@ -162,8 +171,9 @@ func AddRelationship(ctx context.Context, driver neo4j.DriverWithContext, rel mo
 	return nil
 }
 
-func GetGraph(ctx context.Context, driver neo4j.DriverWithContext) (models.Graph, error) {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+// GetGraph retrieves the graph of persons and their relationships.
+func (db *Neo4jDB) GetGraph(ctx context.Context) (models.Graph, error) {
+	session := db.Driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
 	defer session.Close(ctx)
 
 	result, err := session.Run(ctx,
@@ -200,10 +210,10 @@ func GetGraph(ctx context.Context, driver neo4j.DriverWithContext) (models.Graph
 		node := models.Person{
 			ID:          id.(string),
 			Name:        name.(string),
-			Occupation:  occupation.(string),
-			ImageURL:    imageURL.(string),
-			Twitter:     twitter.(string),
-			Description: description.(string),
+			Occupation:  safeString(occupation),
+			ImageURL:    safeString(imageURL),
+			Twitter:     safeString(twitter),
+			Description: safeString(description),
 		}
 		nodes[id.(string)] = node
 
@@ -221,8 +231,8 @@ func GetGraph(ctx context.Context, driver neo4j.DriverWithContext) (models.Graph
 			edge := models.Relationship{
 				From:    id.(string),
 				To:      targetID.(string),
-				Type:    relType.(string),
-				Details: details.(string),
+				Type:    safeString(relType),
+				Details: safeString(details),
 			}
 			log.Printf("Adding edge: source_id=%s, target_id=%s, type=%s, details=%s", edge.From, edge.To, edge.Type, edge.Details)
 			edges = append(edges, edge)
@@ -252,8 +262,9 @@ func GetGraph(ctx context.Context, driver neo4j.DriverWithContext) (models.Graph
 	return graph, nil
 }
 
-func GetPersons(ctx context.Context, driver neo4j.DriverWithContext) ([]models.Person, error) {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+// GetPersons retrieves all persons from the database.
+func (db *Neo4jDB) GetPersons(ctx context.Context) ([]models.Person, error) {
+	session := db.Driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
 	defer session.Close(ctx)
 
 	result, err := session.Run(ctx,
@@ -278,10 +289,10 @@ func GetPersons(ctx context.Context, driver neo4j.DriverWithContext) ([]models.P
 		persons = append(persons, models.Person{
 			ID:          id.(string),
 			Name:        name.(string),
-			Occupation:  occupation.(string),
-			ImageURL:    imageURL.(string),
-			Twitter:     twitter.(string),
-			Description: description.(string),
+			Occupation:  safeString(occupation),
+			ImageURL:    safeString(imageURL),
+			Twitter:     safeString(twitter),
+			Description: safeString(description),
 		})
 	}
 
@@ -289,8 +300,9 @@ func GetPersons(ctx context.Context, driver neo4j.DriverWithContext) ([]models.P
 	return persons, nil
 }
 
-func AddUser(ctx context.Context, driver neo4j.DriverWithContext, user models.User) error {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+// AddUser adds a new user to the database.
+func (db *Neo4jDB) AddUser(ctx context.Context, user models.User) error {
+	session := db.Driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer session.Close(ctx)
 
 	result, err := session.Run(ctx,
@@ -301,9 +313,11 @@ func AddUser(ctx context.Context, driver neo4j.DriverWithContext, user models.Us
 			"email": user.Email,
 		})
 	if err != nil {
+		log.Printf("Failed to check existing user: %v", err)
 		return fmt.Errorf("failed to check existing user: %w", err)
 	}
 	if result.Next(ctx) {
+		log.Printf("User already exists: login=%s, email=%s", user.Login, user.Email)
 		return ErrUserExists
 	}
 
@@ -316,13 +330,16 @@ func AddUser(ctx context.Context, driver neo4j.DriverWithContext, user models.Us
 			"password": user.Password,
 		})
 	if err != nil {
+		log.Printf("Failed to add user: %v", err)
 		return fmt.Errorf("failed to add user: %w", err)
 	}
+	log.Printf("User added successfully: login=%s", user.Login)
 	return nil
 }
 
-func GetUserByLogin(ctx context.Context, driver neo4j.DriverWithContext, login string) (models.User, error) {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+// GetUserByLogin retrieves a user by their login.
+func (db *Neo4jDB) GetUserByLogin(ctx context.Context, login string) (models.User, error) {
+	session := db.Driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
 	defer session.Close(ctx)
 
 	result, err := session.Run(ctx,
@@ -330,6 +347,7 @@ func GetUserByLogin(ctx context.Context, driver neo4j.DriverWithContext, login s
 		 RETURN u.id, u.login, u.email, u.password`,
 		map[string]interface{}{"login": login})
 	if err != nil {
+		log.Printf("Failed to query user for login %s: %v", login, err)
 		return models.User{}, fmt.Errorf("failed to query user: %w", err)
 	}
 
@@ -343,16 +361,18 @@ func GetUserByLogin(ctx context.Context, driver neo4j.DriverWithContext, login s
 		return models.User{
 			ID:       id.(string),
 			Login:    login.(string),
-			Email:    email.(string),
+			Email:    safeString(email),
 			Password: password.(string),
 		}, nil
 	}
 
+	log.Printf("User not found for login: %s", login)
 	return models.User{}, fmt.Errorf("user not found")
 }
 
-func GetUserByID(ctx context.Context, driver neo4j.DriverWithContext, id string) (models.User, error) {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+// GetUserByID retrieves a user by their ID.
+func (db *Neo4jDB) GetUserByID(ctx context.Context, id string) (models.User, error) {
+	session := db.Driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
 	defer session.Close(ctx)
 
 	result, err := session.Run(ctx,
@@ -360,6 +380,7 @@ func GetUserByID(ctx context.Context, driver neo4j.DriverWithContext, id string)
 		 RETURN u.id, u.login, u.email, u.password`,
 		map[string]interface{}{"id": id})
 	if err != nil {
+		log.Printf("Failed to query user for ID %s: %v", id, err)
 		return models.User{}, fmt.Errorf("failed to query user: %w", err)
 	}
 
@@ -372,17 +393,19 @@ func GetUserByID(ctx context.Context, driver neo4j.DriverWithContext, id string)
 
 		return models.User{
 			ID:       id.(string),
-			Login:    login.(string),
-			Email:    email.(string),
+			Login:    safeString(login),
+			Email:    safeString(email),
 			Password: password.(string),
 		}, nil
 	}
 
+	log.Printf("User not found for ID: %s", id)
 	return models.User{}, fmt.Errorf("user not found")
 }
 
-func CreateSession(ctx context.Context, driver neo4j.DriverWithContext, session models.Session) error {
-	neo4jSession := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+// CreateSession creates a new user session.
+func (db *Neo4jDB) CreateSession(ctx context.Context, session models.Session) error {
+	neo4jSession := db.Driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer neo4jSession.Close(ctx)
 
 	_, err := neo4jSession.Run(ctx,
@@ -393,13 +416,16 @@ func CreateSession(ctx context.Context, driver neo4j.DriverWithContext, session 
 			"expiresAt": session.ExpiresAt,
 		})
 	if err != nil {
+		log.Printf("Failed to create session: %v", err)
 		return fmt.Errorf("failed to create session: %w", err)
 	}
+	log.Printf("Session created successfully: id=%s", session.ID)
 	return nil
 }
 
-func GetSession(ctx context.Context, driver neo4j.DriverWithContext, sessionID string) (models.Session, error) {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+// GetSession retrieves a session by its ID.
+func (db *Neo4jDB) GetSession(ctx context.Context, sessionID string) (models.Session, error) {
+	session := db.Driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
 	defer session.Close(ctx)
 
 	result, err := session.Run(ctx,
@@ -407,6 +433,7 @@ func GetSession(ctx context.Context, driver neo4j.DriverWithContext, sessionID s
 		 RETURN s.id, s.userId, s.expiresAt`,
 		map[string]interface{}{"id": sessionID})
 	if err != nil {
+		log.Printf("Failed to query session for ID %s: %v", sessionID, err)
 		return models.Session{}, fmt.Errorf("failed to query session: %w", err)
 	}
 
@@ -423,11 +450,13 @@ func GetSession(ctx context.Context, driver neo4j.DriverWithContext, sessionID s
 		}, nil
 	}
 
+	log.Printf("Session not found for ID: %s", sessionID)
 	return models.Session{}, ErrNoSuchSession
 }
 
-func DeleteSession(ctx context.Context, driver neo4j.DriverWithContext, sessionID string) error {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+// DeleteSession deletes a session by its ID.
+func (db *Neo4jDB) DeleteSession(ctx context.Context, sessionID string) error {
+	session := db.Driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer session.Close(ctx)
 
 	_, err := session.Run(ctx,
@@ -435,7 +464,17 @@ func DeleteSession(ctx context.Context, driver neo4j.DriverWithContext, sessionI
 		 DELETE s`,
 		map[string]interface{}{"id": sessionID})
 	if err != nil {
+		log.Printf("Failed to delete session for ID %s: %v", sessionID, err)
 		return fmt.Errorf("failed to delete session: %w", err)
 	}
+	log.Printf("Session deleted successfully: id=%s", sessionID)
 	return nil
+}
+
+// safeString converts an interface{} to string, returning empty string if nil.
+func safeString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	return v.(string)
 }

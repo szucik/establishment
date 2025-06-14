@@ -3,39 +3,73 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
-	"establishment/v1/establishment/models"
-	database "establishment/v1/establishment/neo4j"
-	"github.com/google/uuid"
+	"establishment/v1/internal/database/neo4j"
+	"establishment/v1/internal/models"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+
+	//"establishment/v1/establishment/sqlitle"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
-
-var driver neo4j.DriverWithContext
 
 func main() {
 	ctx := context.Background()
 
 	var err error
-	driver, err = database.ConnectToNeo4j(ctx)
+	db, err := database.ConnectToNeo4j(ctx)
 	if err != nil {
 		log.Fatalf("Error connecting to Neo4j: %v", err)
 	}
-	defer driver.Close(ctx)
+	defer func(Driver neo4j.DriverWithContext, ctx context.Context) {
+		err := Driver.Close(ctx)
+		if err != nil {
+			log.Fatalf("Error closing driver: %v", err)
+		}
+	}(db.Driver, ctx)
 
-	http.Handle("/person/", enableCORS(http.HandlerFunc(handlePerson)))
-	http.Handle("/person", enableCORS(requireAuth(http.HandlerFunc(handlePersonPost))))
-	http.Handle("/relationship", enableCORS(requireAuth(http.HandlerFunc(handleRelationship))))
-	http.Handle("/graph", enableCORS(http.HandlerFunc(handleGraph)))
-	http.Handle("/persons", enableCORS(http.HandlerFunc(handlePersons)))
-	http.Handle("/register", enableCORS(http.HandlerFunc(handleRegister)))
-	http.Handle("/login", enableCORS(http.HandlerFunc(handleLogin)))
-	http.Handle("/logout", enableCORS(http.HandlerFunc(handleLogout)))
-	http.Handle("/check-session", enableCORS(http.HandlerFunc(handleCheckSession)))
+	//db, err := database.ConnectToSQLite(ctx)
+	//if err != nil {
+	//	log.Fatalf("Error connecting to SQLite: %v", err)
+	//}
+	//defer db.Close()
+
+	//if err := database.InitSchema(ctx, db); err != nil {
+	//	log.Fatalf("Error initializing SQLite schema: %v", err)
+	//}
+
+	http.Handle("/person/", enableCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlePerson(w, r, db)
+	})))
+	http.Handle("/person", enableCORS(requireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlePersonPost(w, r, db)
+	}))))
+	http.Handle("/relationship", enableCORS(requireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleRelationship(w, r, db)
+	}))))
+	http.Handle("/graph", enableCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleGraph(w, r, db)
+	})))
+	http.Handle("/persons", enableCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlePersons(w, r, db)
+	})))
+	http.Handle("/register", enableCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleRegister(w, r, db)
+	})))
+	http.Handle("/login", enableCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleLogin(w, r, db)
+	})))
+	http.Handle("/logout", enableCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleLogout(w, r, db)
+	})))
+	http.Handle("/check-session", enableCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleCheckSession(w, r, db)
+	})))
 
 	fs := http.FileServer(http.Dir("static"))
 	http.Handle("/", fs)
@@ -44,8 +78,7 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
-// GET /person/:id
-func handlePerson(w http.ResponseWriter, r *http.Request) {
+func handlePerson(w http.ResponseWriter, r *http.Request, db models.Database) {
 	if r.Method != http.MethodGet {
 		log.Printf("Unsupported method %s for /person (GET)", r.Method)
 		http.Error(w, "Only GET allowed", http.StatusMethodNotAllowed)
@@ -62,8 +95,8 @@ func handlePerson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	person, err := database.GetPerson(ctx, driver, id)
-	if err == database.ErrNoSuchPerson {
+	person, err := db.GetPerson(ctx, id)
+	if errors.Is(err, database.ErrNoSuchPerson) {
 		log.Printf("Person not found for ID: %s", id)
 		http.Error(w, "Person not found", http.StatusNotFound)
 		return
@@ -77,8 +110,7 @@ func handlePerson(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, person)
 }
 
-// POST /person
-func handlePersonPost(w http.ResponseWriter, r *http.Request) {
+func handlePersonPost(w http.ResponseWriter, r *http.Request, db models.Database) {
 	if r.Method != http.MethodPost {
 		log.Printf("Unsupported method %s for /person (POST)", r.Method)
 		http.Error(w, "Only POST allowed", http.StatusMethodNotAllowed)
@@ -101,7 +133,7 @@ func handlePersonPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := database.AddPerson(ctx, driver, person); err != nil {
+	if err := db.AddPerson(ctx, person); err != nil {
 		log.Printf("Failed to add person: %v", err)
 		http.Error(w, "Failed to add person: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -110,8 +142,7 @@ func handlePersonPost(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-// POST /relationship
-func handleRelationship(w http.ResponseWriter, r *http.Request) {
+func handleRelationship(w http.ResponseWriter, r *http.Request, db models.Database) {
 	if r.Method != http.MethodPost {
 		log.Printf("Unsupported method %s for /relationship", r.Method)
 		http.Error(w, "Only POST allowed", http.StatusMethodNotAllowed)
@@ -128,7 +159,7 @@ func handleRelationship(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := database.AddRelationship(ctx, driver, rel); err != nil {
+	if err := db.AddRelationship(ctx, rel); err != nil {
 		log.Printf("Failed to add relationship: %v", err)
 		http.Error(w, "Failed to add relationship: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -137,8 +168,7 @@ func handleRelationship(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-// GET /graph
-func handleGraph(w http.ResponseWriter, r *http.Request) {
+func handleGraph(w http.ResponseWriter, r *http.Request, db models.Database) {
 	if r.Method != http.MethodGet {
 		log.Printf("Unsupported method %s for /graph", r.Method)
 		http.Error(w, "Only GET allowed", http.StatusMethodNotAllowed)
@@ -148,7 +178,7 @@ func handleGraph(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	graph, err := database.GetGraph(ctx, driver)
+	graph, err := db.GetGraph(ctx)
 	if err != nil {
 		log.Printf("Error fetching graph: %v", err)
 		http.Error(w, "Error fetching graph: "+err.Error(), http.StatusInternalServerError)
@@ -158,8 +188,7 @@ func handleGraph(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, graph)
 }
 
-// GET /persons
-func handlePersons(w http.ResponseWriter, r *http.Request) {
+func handlePersons(w http.ResponseWriter, r *http.Request, db models.Database) {
 	if r.Method != http.MethodGet {
 		log.Printf("Unsupported method %s for /persons", r.Method)
 		http.Error(w, "Only GET allowed", http.StatusMethodNotAllowed)
@@ -169,7 +198,7 @@ func handlePersons(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	persons, err := database.GetPersons(ctx, driver)
+	persons, err := db.GetPersons(ctx)
 	if err != nil {
 		log.Printf("Error fetching persons: %v", err)
 		http.Error(w, "Error fetching persons: "+err.Error(), http.StatusInternalServerError)
@@ -179,8 +208,7 @@ func handlePersons(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, persons)
 }
 
-// POST /register
-func handleRegister(w http.ResponseWriter, r *http.Request) {
+func handleRegister(w http.ResponseWriter, r *http.Request, db models.Database) {
 	if r.Method != http.MethodPost {
 		log.Printf("Unsupported method %s for /register", r.Method)
 		http.Error(w, "Only POST allowed", http.StatusMethodNotAllowed)
@@ -221,7 +249,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		Password: string(hashedPassword),
 	}
 
-	if err := database.AddUser(ctx, driver, user); err != nil {
+	if err := db.AddUser(ctx, user); err != nil {
 		if err == database.ErrUserExists {
 			log.Printf("User already exists: login=%s, email=%s", input.Login, input.Email)
 			http.Error(w, "User with this login or email already exists", http.StatusBadRequest)
@@ -235,8 +263,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-// POST /login
-func handleLogin(w http.ResponseWriter, r *http.Request) {
+func handleLogin(w http.ResponseWriter, r *http.Request, db models.Database) {
 	if r.Method != http.MethodPost {
 		log.Printf("Unsupported method %s for /login", r.Method)
 		http.Error(w, "Only POST allowed", http.StatusMethodNotAllowed)
@@ -256,7 +283,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	user, err := database.GetUserByLogin(ctx, driver, input.Login)
+	user, err := db.GetUserByLogin(ctx, input.Login)
 	if err != nil {
 		log.Printf("Invalid login: %s", input.Login)
 		http.Error(w, "Invalid login or password", http.StatusUnauthorized)
@@ -274,7 +301,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		UserID:    user.ID,
 		ExpiresAt: time.Now().Add(24 * time.Hour).Unix(),
 	}
-	if err := database.CreateSession(ctx, driver, session); err != nil {
+	if err := db.CreateSession(ctx, session); err != nil {
 		log.Printf("Error creating session for user %s: %v", user.ID, err)
 		http.Error(w, "Error creating session: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -288,16 +315,14 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		Expires:  time.Now().Add(24 * time.Hour),
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, // Changed to Lax for better compatibility
-		// Secure: true, // Uncomment in production with HTTPS
+		SameSite: http.SameSiteLaxMode,
 	})
 
 	log.Printf("User logged in: %s, cookie set with session_id=%s", user.Login, session.ID)
 	w.WriteHeader(http.StatusOK)
 }
 
-// POST /logout
-func handleLogout(w http.ResponseWriter, r *http.Request) {
+func handleLogout(w http.ResponseWriter, r *http.Request, db models.Database) {
 	if r.Method != http.MethodPost {
 		log.Printf("Unsupported method %s for /logout", r.Method)
 		http.Error(w, "Only POST allowed", http.StatusMethodNotAllowed)
@@ -314,7 +339,7 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := database.DeleteSession(ctx, driver, sessionID.Value); err != nil {
+	if err := db.DeleteSession(ctx, sessionID.Value); err != nil {
 		log.Printf("Error logging out for session %s: %v", sessionID.Value, err)
 		http.Error(w, "Error logging out: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -333,8 +358,7 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// GET /check-session
-func handleCheckSession(w http.ResponseWriter, r *http.Request) {
+func handleCheckSession(w http.ResponseWriter, r *http.Request, db models.Database) {
 	if r.Method != http.MethodGet {
 		log.Printf("Unsupported method %s for /check-session", r.Method)
 		http.Error(w, "Only GET allowed", http.StatusMethodNotAllowed)
@@ -353,14 +377,14 @@ func handleCheckSession(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Checking session: session_id=%s", sessionID.Value)
 
-	session, err := database.GetSession(ctx, driver, sessionID.Value)
+	session, err := db.GetSession(ctx, sessionID.Value)
 	if err != nil || session.ExpiresAt < time.Now().Unix() {
 		log.Printf("Session inactive or expired: session_id=%s, error: %v", sessionID.Value, err)
 		http.Error(w, "Session inactive or expired", http.StatusUnauthorized)
 		return
 	}
 
-	user, err := database.GetUserByID(ctx, driver, session.UserID)
+	user, err := db.GetUserByID(ctx, session.UserID)
 	if err != nil {
 		log.Printf("User not found for session %s: %v", sessionID.Value, err)
 		http.Error(w, "User not found", http.StatusInternalServerError)
@@ -374,11 +398,18 @@ func handleCheckSession(w http.ResponseWriter, r *http.Request) {
 	}{Login: user.Login})
 }
 
-// Middleware to require authentication
-func requireAuth(next http.Handler) http.Handler {
+// requireAuth middleware
+func requireAuth(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+
+		db, ok := r.Context().Value("db").(models.Database)
+		if !ok {
+			log.Printf("No database in context for request: %s", r.URL.Path)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 
 		sessionID, err := r.Cookie("session_id")
 		if err != nil {
@@ -387,13 +418,15 @@ func requireAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		session, err := database.GetSession(ctx, driver, sessionID.Value)
+		session, err := db.GetSession(ctx, sessionID.Value)
 		if err != nil || session.ExpiresAt < time.Now().Unix() {
 			log.Printf("Session inactive or expired for ID %s: %v", sessionID.Value, err)
 			http.Error(w, "Session inactive or expired", http.StatusUnauthorized)
 			return
 		}
 
+		ctx = context.WithValue(ctx, "db", db)
+		r = r.WithContext(ctx)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -436,6 +469,11 @@ func enableCORS(next http.Handler) http.Handler {
 			return
 		}
 
+		db, ok := r.Context().Value("db").(models.Database)
+		if ok {
+			ctx := context.WithValue(r.Context(), "db", db)
+			r = r.WithContext(ctx)
+		}
 		next.ServeHTTP(w, r)
 	})
 }

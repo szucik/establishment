@@ -1,5 +1,21 @@
 package models
 
+import "context"
+
+type Database interface {
+	AddPerson(ctx context.Context, person Person) error
+	GetPerson(ctx context.Context, id string) (Person, error)
+	GetPersons(ctx context.Context) ([]Person, error)
+	AddRelationship(ctx context.Context, rel Relationship) error
+	GetGraph(ctx context.Context) (Graph, error)
+	AddUser(ctx context.Context, user User) error
+	GetUserByLogin(ctx context.Context, login string) (User, error)
+	GetUserByID(ctx context.Context, id string) (User, error)
+	CreateSession(ctx context.Context, session Session) error
+	GetSession(ctx context.Context, sessionID string) (Session, error)
+	DeleteSession(ctx context.Context, sessionID string) error
+}
+
 type Person struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
