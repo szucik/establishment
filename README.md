@@ -1,287 +1,136 @@
-# Establishment - Graph Application 
+# Elity Polski — układ zamknięty
 
 ## Acknowledgments
 
-This project was developed with the assistance of **Grok**, an AI tool created by xAI, which provided support in writing, debugging, and optimizing code, as well as generating documentation. Special thanks to the open-source community for providing libraries like `go-sqlite3` and `neo4j-go-driver`.
-
+This project was developed with the assistance of **Grok**, an AI tool created by xAI, which provided support in writing, debugging, and optimizing code, as well as generating documentation. Later refactoring and the frontend redesign were done with **Claude Code** (Anthropic). Special thanks to the open-source community for providing libraries like `go-sqlite3`, `neo4j-go-driver`, Vue and d3.
 
 ## Overview
 
-The **Establishment Graph Application** is a web-based platform for managing and visualizing relationships between individuals. It allows users to create profiles for persons, define relationships between them, and view the resulting network as a graph. The application supports user authentication, session management, and persistent storage using either SQLite or Neo4j databases. The backend is built in Go, and the frontend uses static HTML with JavaScript for dynamic interactions.
+A web application for mapping connections between people: add persons, connect them with typed relationships (family, party, business, …) and explore the resulting network as a graph drawn on an animated galaxy background.
 
-This project was developed with the assistance of artificial intelligence tools to streamline coding, debugging, and documentation processes.
+- **Backend:** Go, hexagonal architecture, SQLite (default) or Neo4j.
+- **Frontend:** static HTML pages with Vue 3 and d3, served by the same Go server.
 
 ## Features
 
-- **Person Management**:
-    - Add persons with attributes: ID, name, occupation, image URL, Twitter handle, and description.
-    - Retrieve individual person details by ID or list all persons.
-- **Relationship Management**:
-    - Create directed relationships between persons with a type and details.
-    - Prevent self-referential relationships and validate person existence.
-- **Graph Visualization**:
-    - Fetch the entire graph of persons (nodes) and relationships (edges) for visualization.
-- **User Authentication**:
-    - Register users with unique login and email.
-    - Login to create sessions with expiration times.
-    - Logout to delete sessions.
-- **Database Flexibility**:
-    - Supports SQLite for lightweight, file-based storage.
-    - Supports Neo4j for graph-based storage, optimized for relationship queries.
-- **REST API**:
-    - Endpoints for managing persons, relationships, users, sessions, and the graph.
-- **Frontend**:
-    - Static HTML pages for viewing person details and the graph.
-    - JavaScript for fetching data from the backend API.
+- **Graph of connections** (`/static/`): every person is a planet, every relationship a beam of light labelled with its type. Drag nodes, hover for details, click to open a profile.
+- **Person profile** (`/static/person_view.html?id=<id>`): photo (or a planet with initials), occupation, description, link to X, and a graph of only that person's connections with the person pinned in the centre.
+- **Search** (top right on the graph, profile and panel pages): finds people by name, occupation or description; ignores Polish diacritics and matches surname gender forms (*Zieliński* / *Zielińska*). Arrow keys + Enter, Esc closes.
+- **Panel** (`/static/backend.html`, login required): add persons and relationships. The relationship type is free text with suggestions — type a new one (e.g. `pracownik`) to create it.
+- **Accounts:** register, log in (24 h session cookie), log out.
+
+Rules enforced by the domain:
+
+- A person needs an ID and a name; IDs are unique.
+- A relationship needs both ends, a type, and cannot connect a person with themselves; both persons must exist.
+- A relationship is unique per *(source, target, type)*; saving it again updates its details.
 
 ## Project Structure
 
 ```
 establishment/
-├── database/
-│   ├── neo4j.go        # Neo4j database implementation
-│   ├── sqlite3.go      # SQLite database implementation
-├── models/
-│   ├── models.go       # Data structures for Person, Relationship, User, Session, Graph
+├── main.go, config.go        # Composition root: env config, wiring, HTTP server with timeouts and graceful shutdown
+├── internal/
+│   ├── person/               # Domain: Person, Relationship, Graph, validation, Service + Repository port
+│   ├── auth/                 # Domain: User, Session, Registration, Service + repository/hasher ports
+│   ├── httpapi/              # HTTP adapter: routes, JSON DTOs, session & CORS middleware, error mapping
+│   ├── sqlitestore/          # SQLite adapter (schema migrations via PRAGMA user_version)
+│   ├── neo4jstore/           # Neo4j adapter (uniqueness constraints created on start)
+│   └── password/             # bcrypt adapter for auth.PasswordHasher
 ├── static/
-│   ├── person_view.html # Frontend page for person details
-│   ├── graph_view.html  # Frontend page for graph visualization
-│   ├── *.js            # JavaScript for frontend interactivity
-├── main.go             # Main application entry point with HTTP server and handlers
-├── go.mod              # Go module dependencies
-├── fly.toml            # Fly.io deployment configuration
-└── README.md           # Project documentation (this file)
+│   ├── index.html            # Graph of all connections
+│   ├── person_view.html      # Person profile with their own connections graph
+│   ├── backend.html          # Panel: add persons and relationships
+│   ├── login.html            # Login and registration
+│   ├── graph.js              # Shared graph renderer (full graph and "person in the centre" mode)
+│   ├── search.js             # Person search box (mounted on [data-person-search])
+│   ├── cosmos.js             # Animated galaxy background (canvas)
+│   └── theme.css             # Shared dark/cosmic theme
+└── add_person.sh             # Script for bulk-adding persons and relationships via the API
 ```
+
+Dependencies point inwards: `httpapi`, `sqlitestore`, `neo4jstore` → `person`, `auth`. Domain packages import nothing from infrastructure and define the interfaces they need (consumer-side ports).
 
 ## Requirements
 
-- **Go**: Version 1.18 or later
-- **Databases** (one of):
-    - **SQLite**: No additional setup required (uses `data.db` file).
-    - **Neo4j**: Version 5.x, accessible via `neo4j://` URI (e.g., local or Neo4j Aura).
-- **Node.js** (for frontend testing): Version 14.x or later
-- **Docker** (optional): For running Neo4j locally.
-- **Dependencies**:
-    - Go: `github.com/mattn/go-sqlite3`, `github.com/neo4j/neo4j-go-driver/v5`
-    - Node.js: `live-server` for local frontend testing
-
-## Installation
-
-1. **Clone the Repository**:
-   ```bash
-   git clone <repository-url>
-   cd establishment
-   ```
-
-2. **Install Go Dependencies**:
-   ```bash
-   go mod tidy
-   ```
-
-3. **Set Up Database**:
-    - **SQLite**:
-        - No setup needed; `data.db` will be created automatically.
-    - **Neo4j** (Local):
-      ```bash
-      docker run -p 7687:7687 -p 7474:7474 -e NEO4J_AUTH=neo4j/secretgraph neo4j
-      ```
-      Set environment variables:
-      ```bash
-      export NEO4J_URI=neo4j://localhost:7687
-      export NEO4J_USER=neo4j
-      export NEO4J_PASSWORD=secretgraph
-      ```
-    - **Neo4j (Cloud)**:
-        - Use Neo4j Aura or a hosted instance.
-        - Set environment variables with provided credentials.
-
-4. **Install Frontend Dependencies** (for local testing):
-   ```bash
-   npm install -g live-server
-   ```
+- **Go** 1.23+ and a C compiler (`gcc`) — `go-sqlite3` uses cgo.
+- **Neo4j 5.x** — only when running with `STORAGE=neo4j`.
 
 ## Running Locally
 
-1. **Start the Backend**:
-    - For SQLite:
-      ```bash
-      go run main.go
-      ```
-    - For Neo4j:
-      Ensure Neo4j is running and environment variables are set, then:
-      ```bash
-      go run main.go
-      ```
-    - The server runs on `http://localhost:8080`.
+```bash
+go run .                      # SQLite in ./data.db, http://localhost:8080
+ADDR=:8081 go run .           # another port
+STORAGE=neo4j NEO4J_PASSWORD=... go run .
+```
 
-2. **Start the Frontend**:
-   ```bash
-   npx live-server --port=5500
-   ```
-    - Access:
-        - Person view: `http://localhost:5500/static/person_view.html?id=<uuid>`
-        - Graph view: `http://localhost:5500/static/graph_view.html`
+Open `http://localhost:8080/` (redirects to the graph). The frontend uses relative API URLs, so it works on whatever address the server runs.
 
-3. **Test API Endpoints**:
-    - Get graph:
-      ```bash
-      curl http://localhost:8080/graph
-      ```
-    - Register user:
-      ```bash
-      curl -X POST http://localhost:8080/register -d '{"login":"test","email":"test@example.com","password":"password"}'
-      ```
-    - Login:
-      ```bash
-      curl -X POST http://localhost:8080/login -d '{"login":"test","password":"password"}'
-      ```
+| Variable | Default | Meaning |
+|---|---|---|
+| `ADDR` | `:8080` | Listen address |
+| `STORAGE` | `sqlite` | `sqlite` or `neo4j` |
+| `SQLITE_PATH` | `./data.db` | SQLite file (created and migrated automatically) |
+| `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` | `neo4j://localhost:7687` / `neo4j` / required | Neo4j connection |
+| `ALLOWED_ORIGINS` | `http://localhost:5500,http://127.0.0.1:5500` | CORS origins (comma-separated), only needed when the frontend is served from elsewhere |
+| `COOKIE_SECURE` | `false` | Set `true` when served over HTTPS |
+| `STATIC_DIR` | `static` | Directory served at `/static/` |
+
+Local Neo4j:
+
+```bash
+docker run -p 7687:7687 -p 7474:7474 -e NEO4J_AUTH=neo4j/<password> neo4j
+```
+
+### Adding data from a script
+
+`add_person.sh` logs in and exposes `add_person '<json>'` and `add_relationship <source> <target> <type> [details]`. Append calls at the end of the file and run:
+
+```bash
+API_URL=http://localhost:8080 API_LOGIN=<login> API_PASSWORD=<password> ./add_person.sh
+```
 
 ## API Endpoints
 
 | Endpoint | Method | Description | Request Body |
 |----------|--------|-------------|--------------|
-| `/graph` | GET | Retrieve the entire graph | None |
-| `/person` | POST | Add a person | `{"id":"uuid","name":"string","occupation":"string","image_url":"string","twitter":"string","description":"string"}` |
-| `/person/{id}` | GET | Get person by ID | None |
-| `/relationship` | POST | Add a relationship | `{"source_id":"uuid","target_id":"uuid","type":"string","details":"string"}` |
-| `/register` | POST | Register a user | `{"login":"string","email":"string","password":"string"}` |
-| `/login` | POST | Login and create session | `{"login":"string","password":"string"}` |
-| `/logout` | POST | Logout and delete session | None (requires session cookie) |
+| `/graph` | GET | All persons (`nodes`) and relationships (`edges`) | — |
+| `/persons` | GET | All persons | — |
+| `/person/{id}` | GET | One person | — |
+| `/person` | POST | Add a person 🔒 | `{"id","name","occupation","image_url","twitter","description"}` |
+| `/relationship` | POST | Add or update a relationship 🔒 | `{"source_id","target_id","type","details"}` |
+| `/register` | POST | Register a user | `{"login","email","password"}` |
+| `/login` | POST | Log in, sets `session_id` cookie | `{"login","password"}` |
+| `/logout` | POST | Log out | — (session cookie) |
+| `/check-session` | GET | Logged-in user's login 🔒 | — |
+
+🔒 requires the session cookie. Errors: `400` invalid input, `401` not logged in / bad credentials, `404` unknown person, `409` duplicate person or user, `500` internal error (details only in server logs). Request bodies are limited to 1 MB.
 
 ## Database Switching
 
-The application supports both SQLite and Neo4j via a `Database` interface. To switch databases, modify `main.go`:
-
-- **SQLite**:
-  ```go
-  db, err := database.ConnectToSQLite(ctx)
-  if err != nil {
-      log.Fatalf("Error connecting to SQLite: %v", err)
-  }
-  defer db.Close()
-  if err := database.InitSchema(ctx, db); err != nil {
-      log.Fatalf("Error initializing schema: %v", err)
-  }
-  ```
-
-- **Neo4j**:
-  ```go
-  db, err := database.ConnectToNeo4j(ctx)
-  if err != nil {
-      log.Fatalf("Error connecting to Neo4j: %v", err)
-  }
-  defer db.Driver.Close(ctx)
-  ```
-
-## Deployment
-
-### Backend (Fly.io)
-
-1. **Install Flyctl**:
-   ```bash
-   curl -L https://fly.io/install.sh | sh
-   ```
-
-2. **Create Fly.io App**:
-   ```bash
-   flyctl launch
-   ```
-
-3. **Configure `fly.toml`**:
-   Ensure `fly.toml` is set up (see previous artifact_id: `e015723b-1a8f-4bdd-b972-85efd6eaaf26`).
-
-4. **Set Environment Variables** (for Neo4j):
-   ```bash
-   flyctl secrets set NEO4J_URI=neo4j://your-neo4j-host
-   flyctl secrets set NEO4J_USER=neo4j
-   flyctl secrets set NEO4J_PASSWORD=your-password
-   ```
-
-5. **Deploy**:
-   ```bash
-   flyctl deploy
-   ```
-
-6. **SQLite Deployment**:
-    - Use a persistent volume:
-      ```bash
-      flyctl volumes create data --region <region>
-      ```
-      Update `fly.toml`:
-      ```toml
-      [[mounts]]
-        source = "data"
-        destination = "/data"
-      ```
-      Modify `database/sqlite3.go` to use `/data/data.db`.
-
-### Frontend (Netlify)
-
-1. **Create Netlify Site**:
-    - Drag and drop the `static/` folder to Netlify's dashboard or use:
-      ```bash
-      npm install -g netlify-cli
-      netlify deploy
-      ```
-
-2. **Configure**:
-    - Set build directory to `static/`.
-    - Update API URLs in `static/*.js` to point to the Fly.io backend (e.g., `https://your-app.fly.dev`).
-
-3. **Deploy**:
-   ```bash
-   netlify deploy --prod
-   ```
+Set `STORAGE=sqlite` or `STORAGE=neo4j`. Both adapters implement the same ports (`person.Repository`, `auth.UserRepository`, `auth.SessionRepository`) with the same behaviour, so the rest of the application does not change.
 
 ## Testing
 
-- **Backend**:
-  ```bash
-  go test ./...
-  ```
-  (Add tests to `database/` and handlers if needed.)
+```bash
+go vet ./...
+go test -race ./...
+```
 
-- **API**:
-  Use `curl` or Postman to test endpoints (see "Test API Endpoints" above).
+Unit tests cover the domain (`person`, `auth`) and the HTTP API (`httpapi`) through their public functions, using fakes — no database or network needed.
 
-- **Database**:
-    - SQLite: Open `data.db` with `sqlite3 data.db` and run:
-      ```sql
-      .schema
-      SELECT * FROM Person;
-      ```
-    - Neo4j: Use the Neo4j Browser (`http://localhost:7474`) and run:
-      ```cypher
-      MATCH (n) RETURN n LIMIT 10
-      ```
+## Deployment
 
-- **Frontend**:
-  Verify pages load correctly and data is fetched from the API.
+The Go server serves both the API and the frontend, so deploy it as a single service:
 
-## Troubleshooting
+- Persist the SQLite file on a volume and set `SQLITE_PATH` (e.g. `/data/data.db`), or point it at Neo4j with `STORAGE=neo4j` and the `NEO4J_*` variables.
+- Serve over HTTPS and set `COOKIE_SECURE=true`.
 
-- **Backend Errors**:
-    - Check logs: `go run main.go` or `flyctl logs`.
-    - Ensure database is accessible (Neo4j URI or SQLite file permissions).
-- **Database Issues**:
-    - SQLite: Verify `data.db` is writable.
-    - Neo4j: Check credentials and connectivity (`telnet localhost 7687`).
-- **Frontend Issues**:
-    - Open browser console (F12) to check for JavaScript errors.
-    - Verify API URLs in `static/*.js`.
-- **Dependencies**:
-  ```bash
-  go mod tidy
-  npm install
-  ```
+## Known Limitations
 
-## Contributing
-
-1. Fork the repository.
-2. Create a feature branch: `git checkout -b feature-name`.
-3. Commit changes: `git commit -m "Add feature"`.
-4. Push to branch: `git push origin feature-name`.
-5. Open a pull request.
+- There is no editing or deleting of persons and relationships through the API yet.
+- Expired sessions are rejected but not removed from the database.
+- The Neo4j adapter has not been tested against a live instance after the refactor.
 
 ## License
 

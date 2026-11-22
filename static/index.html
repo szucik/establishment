@@ -3,342 +3,54 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Powiązania Polityczne</title>
-    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <title>Elity Polski - układ zamknięty</title>
+    <script src="https://unpkg.com/vue@3.4.38/dist/vue.global.prod.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+    <link rel="stylesheet" href="/static/theme.css">
     <style>
-        body {
-            font-family: 'Arial', sans-serif;
-            background: linear-gradient(180deg, #0D0C1D, #1B263B);
-            color: #E2E8F0;
-            margin: 0;
-            padding: 0;
-        }
         #app {
             max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
         }
-        .graph-container {
-            background: #0D0C1D;
-            padding: 16px;
-            border-radius: 4px;
-            box-shadow: 0 0 10px rgba(120, 255, 214, 0.3);
-        }
-        .node image {
-            cursor: pointer;
-            filter: drop-shadow(0 0 6px #78FFD6) drop-shadow(0 0 4px #A0C4FF);
-        }
-        .node text {
-            font-size: 12px;
-            fill: #E2E8F0;
-            pointer-events: none;
-            text-shadow: 0 0 6px #78FFD6, 0 0 4px #A0C4FF;
-        }
-        .link text {
-            font-size: 9px;
-            fill: #E2E8F0;
-            text-anchor: middle;
-            pointer-events: none;
-            text-shadow: 0 0 6px #78FFD6, 0 0 4px #A0C4FF;
-        }
-        .tooltip {
-            position: absolute;
-            background: linear-gradient(135deg, #0D0C1D, #1B263B);
-            color: #E2E8F0;
-            padding: 8px;
-            border-radius: 4px;
-            pointer-events: none;
-            font-size: 12px;
-            box-shadow: 0 0 10px rgba(120, 255, 214, 0.4);
-        }
-        .party-PO .node-circle {
-            stroke: #FF6200;
-            stroke-width: 3;
-        }
-        .party-Lewica .node-circle {
-            stroke: #C41E3A;
-            stroke-width: 3;
-        }
-        .party-PiS .node-circle {
-            stroke: #003087;
-            stroke-width: 3;
-        }
-        .party-KO .node-circle {
-            stroke: #00A1D6;
-            stroke-width: 3;
-        }
-        .no-party .node-circle {
-            stroke: #FFFFFF;
-            stroke-width: 2;
-        }
+        .notice { margin-bottom: 12px; padding: 8px 12px; border-radius: 4px; }
     </style>
 </head>
 <body>
+<div class="search-bar"><div data-person-search></div></div>
 <div id="app">
+    <div v-if="error" class="notice bg-red-100 text-red-700">{{ error }}</div>
     <div class="graph-container">
         <div id="graph"></div>
     </div>
 </div>
 
+<script src="/static/graph.js"></script>
 <script>
     const { createApp, ref, onMounted } = Vue;
 
     createApp({
         setup() {
-            const graph = ref({ nodes: [], edges: [] });
             const error = ref('');
 
-            const fetchGraph = async () => {
+            onMounted(async () => {
                 try {
-                    console.log('Pobieranie grafu z http://localhost:8080/graph');
-                    const response = await fetch('http://localhost:8080/graph');
-                    console.log('Odpowiedź graph:', response.status, response.statusText);
-                    if (response.ok) {
-                        graph.value = await response.json();
-                        console.log('Dane grafu:', JSON.stringify(graph.value, null, 2));
-                        renderGraph();
-                    } else {
+                    const response = await fetch('/graph');
+                    if (!response.ok) {
                         error.value = `Błąd pobierania grafu: ${response.status} ${response.statusText}`;
-                        console.error('Błąd pobierania grafu:', response.status, response.statusText);
+                        return;
                     }
-                } catch (error) {
-                    error.value = 'Błąd pobierania grafu: ' + error.message;
-                    console.error('Błąd pobierania grafu:', error);
+                    error.value = renderRelationsGraph('#graph', await response.json());
+                } catch (err) {
+                    error.value = 'Błąd pobierania grafu: ' + err.message;
                 }
-            };
-
-            const renderGraph = () => {
-                console.log('Renderowanie grafu z danymi:', JSON.stringify(graph.value, null, 2));
-                const container = d3.select('#graph').node();
-                const width = container.getBoundingClientRect().width;
-                const height = 600;
-
-                if (!graph.value.nodes || !graph.value.edges) {
-                    console.warn('Brak danych grafu: nodes lub edges są undefined');
-                    error.value = 'Brak danych grafu do wyświetlenia';
-                    return;
-                }
-
-                const nodeIds = new Set(graph.value.nodes.map(node => node.id));
-                const validEdges = graph.value.edges.map(edge => {
-                    const from = edge.source_id || edge.from;
-                    const to = edge.target_id || edge.to;
-                    if (!from || !to || !nodeIds.has(from) || !nodeIds.has(to) || from === to) {
-                        console.warn('Nieprawidłowa krawędź:', edge);
-                        return null;
-                    }
-                    return {
-                        source: from,
-                        target: to,
-                        type: edge.type,
-                        details: edge.details
-                    };
-                }).filter(edge => edge !== null);
-
-                console.log('Valid edges:', JSON.stringify(validEdges, null, 2));
-
-                if (validEdges.length !== graph.value.edges.length) {
-                    error.value = `Niektóre relacje są nieprawidłowe i zostały pominięte. Sprawdź konsolę dla szczegółów.`;
-                }
-
-                if (graph.value.nodes.length === 0) {
-                    d3.select('#graph').selectAll('*').remove();
-                    error.value = 'Brak osób do wyświetlenia w grafie';
-                    return;
-                }
-
-                d3.select('#graph').selectAll('*').remove();
-                const svg = d3.select('#graph')
-                    .append('svg')
-                    .attr('width', '100%')
-                    .attr('height', height)
-                    .style('background', 'linear-gradient(180deg, #0D0C1D, #1B263B)');
-
-                graph.value.nodes.forEach(node => {
-                    node.group = node.occupation === 'Polityk' ? 1 : 2;
-                });
-
-                svg.append('defs')
-                    .append('clipPath')
-                    .attr('id', 'circle-clip')
-                    .append('circle')
-                    .attr('cx', 0)
-                    .attr('cy', 0)
-                    .attr('r', 24);
-
-                const gradient = svg.append('defs')
-                    .append('linearGradient')
-                    .attr('id', 'aurora-gradient')
-                    .attr('x1', '0%')
-                    .attr('y1', '0%')
-                    .attr('x2', '100%')
-                    .attr('y2', '100%');
-                gradient.append('stop')
-                    .attr('offset', '0%')
-                    .attr('stop-color', '#A0C4FF');
-                gradient.append('stop')
-                    .attr('offset', '100%')
-                    .attr('stop-color', '#78FFD6');
-
-                const simulation = d3.forceSimulation(graph.value.nodes)
-                    .force('link', d3.forceLink(validEdges).id(d => d.id).distance(120).strength(0.15))
-                    .force('charge', d3.forceManyBody().strength(-600))
-                    .force('center', d3.forceCenter(width / 2, height / 2).strength(0.2))
-                    .force('collision', d3.forceCollide().radius(30))
-                    .force('x', d3.forceX().x(d => d.group === 1 ? width / 3 : 2 * width / 3).strength(0.1))
-                    .force('y', d3.forceY().y(height / 2).strength(0.1));
-
-                const link = svg.append('g')
-                    .attr('class', 'link')
-                    .selectAll('g')
-                    .data(validEdges)
-                    .enter()
-                    .append('g');
-
-                link.append('line')
-                    .attr('stroke-width', 1.5)
-                    .attr('stroke', 'url(#aurora-gradient)')
-                    .attr('stroke-opacity', 0.5);
-
-                link.append('text')
-                    .attr('dy', -6)
-                    .text(d => d.type)
-                    .attr('fill', '#E2E8F0')
-                    .attr('font-size', '9px')
-                    .attr('text-anchor', 'middle');
-
-                const node = svg.append('g')
-                    .attr('class', 'node')
-                    .selectAll('g')
-                    .data(graph.value.nodes)
-                    .enter()
-                    .append('g')
-                    .attr('class', d => `party-${d.party ? d.party.replace(/\s+/g, '') : 'no-party'}`)
-                    .call(d3.drag()
-                        .on('start', dragstarted)
-                        .on('drag', dragged)
-                        .on('end', dragended));
-
-                node.append('circle')
-                    .attr('class', 'node-circle')
-                    .attr('r', 26)
-                    .attr('fill', 'none');
-
-                node.append('image')
-                    .attr('xlink:href', d => {
-                        if (d.image_url) {
-                            console.log(`Próba załadowania image_url dla ${d.name}: ${d.image_url}`);
-                            return d.image_url;
-                        }
-                        const avatarUrl = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(d.name)}&size=48`;
-                        console.log(`Próba załadowania avatara DiceBear dla ${d.name}: ${avatarUrl}`);
-                        return avatarUrl;
-                    })
-                    .attr('x', -24)
-                    .attr('y', -24)
-                    .attr('width', 48)
-                    .attr('height', 48)
-                    .attr('clip-path', 'url(#circle-clip)')
-                    .on('click', (event, d) => {
-                        window.location.href = `person_view.html?id=${d.id}`;
-                    })
-                    .on('error', function(event, d) {
-                        console.error(`Błąd ładowania avatara dla ${d.name}: ${this.getAttribute('xlink:href')}`);
-                        d3.select(this).attr('xlink:href', 'https://via.placeholder.com/48');
-                    });
-
-                node.append('text')
-                    .attr('dx', 28)
-                    .attr('dy', '.35em')
-                    .text(d => d.name)
-                    .attr('fill', '#E2E8F0')
-                    .attr('font-size', '12px');
-
-                const tooltip = d3.select('body').select('.tooltip');
-                if (tooltip.empty()) {
-                    d3.select('body')
-                        .append('div')
-                        .attr('class', 'tooltip')
-                        .style('opacity', 0);
-                }
-
-                node.on('mouseover', function(event, d) {
-                    const tooltip = d3.select('.tooltip');
-                    tooltip
-                        .html(`
-                            <strong>${d.name}</strong><br>
-                            Zawód: ${d.occupation}<br>
-                            ${d.party ? 'Partia: ' + d.party + '<br>' : ''}
-                            ${d.sb_status ? 'Status SB/PRL: ' + d.sb_status + '<br>' : ''}
-                            ${d.description ? 'Opis: ' + d.description + '<br>' : ''}
-                            ${d.twitter ? 'Twitter: ' + d.twitter : ''}
-                        `);
-                    tooltip
-                        .transition()
-                        .duration(200)
-                        .style('opacity', .9)
-                        .style('left', Math.min(event.pageX + 10, window.innerWidth - 200) + 'px')
-                        .style('top', Math.min(event.pageY - 28, window.innerHeight - 100) + 'px');
-                })
-                    .on('mouseout', function() {
-                        d3.select('.tooltip')
-                            .transition()
-                            .duration(500)
-                            .style('opacity', 0);
-                    });
-
-                function dragstarted(event, d) {
-                    if (!event.active) simulation.alphaTarget(0.3).restart();
-                    d.fx = d.x;
-                    d.fy = d.y;
-                }
-
-                function dragged(event, d) {
-                    d.fx = event.x;
-                    d.fy = event.y;
-                }
-
-                function dragended(event, d) {
-                    if (!event.active) simulation.alphaTarget(0);
-                    d.fx = null;
-                    d.fy = null;
-                }
-
-                simulation.on('tick', () => {
-                    link.select('line')
-                        .attr('x1', d => d.source.x)
-                        .attr('y1', d => d.source.y)
-                        .attr('x2', d => d.target.x)
-                        .attr('y2', d => d.target.y);
-
-                    link.select('text')
-                        .attr('x', d => (d.source.x + d.target.x) / 2)
-                        .attr('y', d => (d.source.y + d.target.y) / 2 - 6);
-
-                    node
-                        .attr('transform', d => `translate(${d.x},${d.y})`);
-                });
-
-                window.addEventListener('resize', () => {
-                    const newWidth = container.getBoundingClientRect().width;
-                    simulation.force('center', d3.forceCenter(newWidth / 2, height / 2).strength(0.2))
-                        .force('x', d3.forceX().x(d => d.group === 1 ? newWidth / 3 : 2 * newWidth / 3).strength(0.1))
-                        .alpha(0.3)
-                        .restart();
-                });
-            };
-
-            onMounted(() => {
-                fetchGraph();
             });
 
-            return {
-                graph,
-                error
-            };
+            return { error };
         }
     }).mount('#app');
 </script>
+<script src="/static/search.js"></script>
+<script src="/static/cosmos.js"></script>
 </body>
 </html>

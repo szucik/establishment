@@ -1,0 +1,170 @@
+/* Shared cosmic theme. Pages keep their original Tailwind layout; this only recolours it. */
+:root {
+  --space: #02030a;
+  --panel: rgba(13, 12, 29, 0.72);
+  --text: #E2E8F0;
+  --muted: #94A3B8;
+  --neon: #78FFD6;
+  --neon-blue: #A0C4FF;
+  --glow: 0 0 10px rgba(120, 255, 214, 0.3);
+  --danger: #FF6B81;
+}
+
+html { background: var(--space); }
+
+body {
+  font-family: 'Arial', sans-serif;
+  background: transparent !important;
+  color: var(--text);
+  margin: 0;
+}
+
+h1 { color: #fff; text-shadow: 0 0 8px rgba(120, 255, 214, 0.6), 0 0 4px rgba(160, 196, 255, 0.6); }
+
+/* cards */
+.bg-white {
+  background: var(--panel) !important;
+  border: 1px solid rgba(120, 255, 214, 0.18);
+  border-radius: 6px;
+  box-shadow: var(--glow) !important;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+/* The graph floats directly on the galaxy: no panel, no shadow. */
+.graph-container { padding: 16px; background: transparent; box-shadow: none; }
+
+/* form controls */
+input, select, textarea {
+  background: rgba(2, 3, 10, 0.6) !important;
+  color: var(--text) !important;
+  border: 1px solid rgba(160, 196, 255, 0.3) !important;
+}
+input::placeholder, textarea::placeholder { color: var(--muted); }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--neon) !important; box-shadow: var(--glow); }
+select option { background: #0D0C1D; }
+
+/* buttons */
+.bg-blue-500 { background: linear-gradient(135deg, #3B82F6, #22D3EE) !important; box-shadow: 0 0 8px rgba(34, 211, 238, 0.4); }
+.bg-blue-500:hover { filter: brightness(1.15); }
+.bg-red-500 { background: linear-gradient(135deg, #E11D48, #F472B6) !important; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+.text-blue-500 { color: var(--neon-blue) !important; }
+
+/* notices */
+.bg-red-100 { background: rgba(225, 29, 72, 0.15) !important; border: 1px solid rgba(225, 29, 72, 0.4); }
+.text-red-700, .text-red-500 { color: var(--danger) !important; }
+.bg-yellow-100 { background: rgba(250, 204, 21, 0.12) !important; border: 1px solid rgba(250, 204, 21, 0.35); }
+.text-yellow-700 { color: #FDE68A !important; }
+
+/* relationship graph ("nici powiązań") — matte planets joined by faint beams, to match the background */
+.node .halo { pointer-events: none; }
+.node .node-circle { stroke: rgba(255, 255, 255, 0.12); stroke-width: 1; }
+.node .initials {
+  font-size: 14px;
+  font-weight: 700;
+  fill: rgba(255, 255, 255, 0.85);
+  pointer-events: none;
+}
+.node .name {
+  font-size: 12px;
+  fill: #cbd5e1;
+  pointer-events: none;
+  paint-order: stroke;
+  stroke: rgba(2, 3, 10, 0.8);
+  stroke-width: 3px;
+}
+.link .beam { stroke-width: 1.5; stroke-opacity: 0.45; }
+.link .beam-flow {
+  stroke: #cbd5e1;
+  stroke-width: 1.2;
+  stroke-opacity: 0.3;
+  stroke-linecap: round;
+  stroke-dasharray: 1 14;
+  animation: beam-flow 2.2s linear infinite;
+}
+.link text {
+  font-size: 9px;
+  fill: #94a3b8;
+  text-anchor: middle;
+  pointer-events: none;
+  paint-order: stroke;
+  stroke: rgba(2, 3, 10, 0.8);
+  stroke-width: 3px;
+}
+@keyframes beam-flow { to { stroke-dashoffset: -15; } }
+@media (prefers-reduced-motion: reduce) {
+  .link .beam-flow { animation: none; }
+}
+.tooltip {
+  position: absolute;
+  max-width: 260px;
+  background: linear-gradient(135deg, #0D0C1D, #1B263B);
+  color: var(--text);
+  padding: 8px;
+  border-radius: 4px;
+  pointer-events: none;
+  font-size: 12px;
+  box-shadow: 0 0 10px rgba(120, 255, 214, 0.4);
+}
+
+/* person profile */
+.profile-photo {
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 3px solid rgba(120, 255, 214, 0.55);
+  box-shadow: 0 0 6px rgba(120, 255, 214, 0.25);
+  flex: none;
+}
+.profile-planet {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 56px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.85);
+}
+.profile-description { white-space: pre-wrap; line-height: 1.5; }
+.node .node-focus { stroke: var(--neon); stroke-width: 2.5; stroke-opacity: 0.85; filter: drop-shadow(0 0 3px rgba(120, 255, 214, 0.5)); }
+
+/* person search */
+.search-bar { max-width: 1200px; margin: 0 auto; padding: 16px 20px 0; }
+.person-search { position: relative; max-width: 420px; margin-left: auto; }
+.person-search input {
+  width: 100%;
+  padding: 10px 16px;
+  border-radius: 999px !important;
+  font-size: 15px;
+  background: rgba(13, 12, 29, 0.7) !important;
+}
+.search-results {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: rgba(10, 12, 28, 0.96);
+  border: 1px solid rgba(160, 196, 255, 0.2);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.search-result { display: flex; align-items: center; gap: 12px; padding: 10px 14px; color: var(--text); text-decoration: none; }
+.search-result.active { background: rgba(160, 196, 255, 0.1); }
+.search-planet {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.85);
+}
+.search-text { display: flex; flex-direction: column; min-width: 0; }
+.search-name { font-weight: 600; }
+.search-occupation { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.search-empty { padding: 12px 14px; color: var(--muted); }

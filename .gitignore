@@ -1,0 +1,8 @@
+# Build output
+/v1
+/establishment
+
+# Local data and secrets
+*.db
+cookie.txt
+.env
